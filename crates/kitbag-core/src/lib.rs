@@ -15,7 +15,7 @@ pub mod state;
 
 pub use collect::{Collected, Item};
 pub use config::Config;
-pub use envelope::Envelope;
+pub use envelope::{payload_hash, Envelope};
 pub use lint::Finding;
 pub use marker::Markers;
 pub use scope::{Scope, Wanted};

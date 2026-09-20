@@ -49,6 +49,11 @@ pub struct Listing {
     /// Present when the backend can report it cheaply; otherwise kitbag reads
     /// the envelope. Either way an unchanged item is never rewritten.
     pub payload_hash: Option<String>,
+    /// Whose it is, when the store can say without being asked for the value.
+    /// A restore takes only the scopes a machine asked for, and deciding that
+    /// from the listing is the difference between fetching everything to find
+    /// out and fetching what is actually wanted.
+    pub scope: Option<kitbag_core::Scope>,
 }
 
 pub trait Backend {
@@ -148,9 +153,13 @@ impl Backend for MemoryBackend {
             .lock()
             .unwrap()
             .iter()
-            .map(|(name, text)| Listing {
-                name: name.clone(),
-                payload_hash: Envelope::parse(text).ok().map(|e| e.sha256()),
+            .map(|(name, text)| {
+                let parsed = Envelope::parse(text).ok();
+                Listing {
+                    name: name.clone(),
+                    payload_hash: parsed.as_ref().map(|e| e.sha256()),
+                    scope: parsed.map(|e| e.scope),
+                }
             })
             .collect())
     }

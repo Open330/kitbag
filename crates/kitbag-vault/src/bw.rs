@@ -62,25 +62,42 @@ impl Bw {
     /// holds the master password, it decides what counts as unlocked - and a
     /// second thing asking for that password would be a second thing that
     /// could get it wrong.
+    ///
+    /// Nor is `bw status` asked here. Every call to this client is a node
+    /// process costing over a second before it does anything, and a check that
+    /// passes on every successful run is a second spent on every successful
+    /// run. A locked vault makes the first real call fail, and that failure is
+    /// where the question gets asked.
     pub fn new() -> Result<Self> {
-        let status = run(&["status"], None, None)?;
-        let parsed: serde_json::Value = serde_json::from_str(&status)
-            .context("bw status did not return JSON; is this the Bitwarden CLI?")?;
-
-        match parsed.get("status").and_then(|s| s.as_str()) {
-            Some("unlocked") => Ok(Self {
-                session: std::env::var("BW_SESSION").ok(),
-                items: Mutex::new(None),
-                folder: Mutex::new(None),
-            }),
-            Some("locked") => bail!("the vault is locked — run `bw unlock` and export BW_SESSION"),
-            Some("unauthenticated") => bail!("not logged in — run `bw login` first"),
-            other => bail!("bw reports an unfamiliar status: {other:?}"),
-        }
+        Ok(Self {
+            session: std::env::var("BW_SESSION").ok(),
+            items: Mutex::new(None),
+            folder: Mutex::new(None),
+        })
     }
 
     fn call(&self, args: &[&str], stdin: Option<&[u8]>) -> Result<String> {
-        run(args, self.session.as_deref(), stdin)
+        run(args, self.session.as_deref(), stdin).map_err(|e| self.explain(e))
+    }
+
+    /// Turn whatever the client said into the thing to do about it. Only
+    /// reached when something already failed, so the extra call costs nothing
+    /// on a run that works.
+    fn explain(&self, failure: anyhow::Error) -> anyhow::Error {
+        let Ok(status) = run(&["status"], self.session.as_deref(), None) else {
+            return failure;
+        };
+        let parsed: serde_json::Value = match serde_json::from_str(&status) {
+            Ok(v) => v,
+            Err(_) => return anyhow!("bw status did not return JSON; is this the Bitwarden CLI?"),
+        };
+        match parsed.get("status").and_then(|s| s.as_str()) {
+            Some("locked") => {
+                anyhow!("the vault is locked — run `bw unlock` and export BW_SESSION")
+            }
+            Some("unauthenticated") => anyhow!("not logged in — run `bw login` first"),
+            _ => failure,
+        }
     }
 
     /// The vault's kitbag items, fetched at most once. Borrowed rather than
@@ -186,6 +203,10 @@ impl Backend for Bw {
                     Some(Listing {
                         name,
                         payload_hash: field(item, "hash"),
+                        // Written by `put` as a courtesy to whoever opens the
+                        // vault in a browser; it costs nothing to read back,
+                        // and the envelope stays the authority if they differ.
+                        scope: field(item, "scope").and_then(|s| s.parse().ok()),
                     })
                 })
                 .collect()

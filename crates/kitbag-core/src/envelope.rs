@@ -100,9 +100,7 @@ impl Envelope {
     }
 
     pub fn sha256(&self) -> String {
-        let mut h = Sha256::new();
-        h.update(&self.payload);
-        format!("{:x}", h.finalize())
+        payload_hash(&self.payload)
     }
 
     pub fn to_text(&self) -> String {
@@ -295,4 +293,13 @@ mod tests {
         let text = format!("{MAGIC}\nowner: acme\n\nbody");
         assert_eq!(Envelope::parse(&text), Err(EnvelopeError::MissingScope));
     }
+}
+
+/// What [`Envelope::sha256`] reports, for bytes that are not in an envelope
+/// yet: the hash covers the payload and nothing else, so a file on disk can be
+/// compared against what a store says it holds without fetching it.
+pub fn payload_hash(bytes: &[u8]) -> String {
+    let mut h = Sha256::new();
+    h.update(bytes);
+    format!("{:x}", h.finalize())
 }

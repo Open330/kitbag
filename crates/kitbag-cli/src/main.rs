@@ -220,8 +220,10 @@ fn main() -> Result<()> {
             TrustCmd::Revoke { targets, from } => trust::revoke_cmd(targets, from)?,
         },
         Command::Lint { ref paths } => check::lint(paths, cli.json)?,
-        Command::Push { dry_run } => run::push(cli.backend.as_deref(), wanted, dry_run)?,
-        Command::Restore { dry_run } => run::restore(cli.backend.as_deref(), wanted, dry_run)?,
+        Command::Push { dry_run } => run::push(cli.backend.as_deref(), wanted, dry_run, colour)?,
+        Command::Restore { dry_run } => {
+            run::restore(cli.backend.as_deref(), wanted, dry_run, colour)?
+        }
         other => {
             println!("  kitbag {} is not implemented yet.", name_of(&other));
             println!("  Implemented so far: status, plan, completions.");

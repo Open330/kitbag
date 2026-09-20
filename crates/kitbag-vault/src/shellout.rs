@@ -93,6 +93,7 @@ impl Backend for Pass {
                     // The hash lives in the envelope, which means reading the
                     // entry - so a `pass` store answers "I cannot say cheaply".
                     payload_hash: None,
+                    scope: None,
                 })
             })
             .collect())
@@ -202,6 +203,7 @@ impl Backend for Op {
                 Some(Listing {
                     name: i.get("title")?.as_str()?.to_string(),
                     payload_hash: None,
+                    scope: None,
                 })
             })
             .collect())

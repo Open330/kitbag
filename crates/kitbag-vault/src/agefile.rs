@@ -125,9 +125,13 @@ impl Backend for AgeFile {
         Ok(self
             .read_all()?
             .into_iter()
-            .map(|(name, text)| Listing {
-                payload_hash: Envelope::parse(&text).ok().map(|e| e.sha256()),
-                name,
+            .map(|(name, text)| {
+                let parsed = Envelope::parse(&text).ok();
+                Listing {
+                    payload_hash: parsed.as_ref().map(|e| e.sha256()),
+                    scope: parsed.map(|e| e.scope),
+                    name,
+                }
             })
             .collect())
     }

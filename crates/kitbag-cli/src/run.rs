@@ -403,18 +403,30 @@ fn open_store(name: Option<&str>) -> Result<Box<dyn Backend>> {
 /// An item the store already holds byte for byte is not sent: comparing by
 /// hash means a machine with nothing to say costs one listing, and a vault
 /// does not fill up with versions of a file that never changed.
-pub fn push(backend: Option<&str>, wanted: Option<Wanted>, dry_run: bool) -> Result<()> {
+pub fn push(
+    backend: Option<&str>,
+    wanted: Option<Wanted>,
+    dry_run: bool,
+    colour: Colour,
+) -> Result<()> {
     let home = home();
     let config = Config::load_or_default(&config_path())?;
     let wanted = wanted.unwrap_or_else(|| config.wanted());
     let Collected { items, skipped } = collect(&config, &home);
 
+    let progress = ui::Progress::new(colour);
+    progress.say("opening the store");
     let store = open_store(backend)?;
+
+    progress.say("reading what the store holds");
     let remote: Remote = store
         .list()?
         .into_iter()
         .map(|l| (l.name, l.payload_hash))
         .collect();
+    let total = items.iter().filter(|i| wanted.accepts(&i.scope)).count();
+    let mut at = 0usize;
+    progress.clear();
 
     let mut sent = 0usize;
     let mut same = 0usize;
@@ -427,6 +439,8 @@ pub fn push(backend: Option<&str>, wanted: Option<Wanted>, dry_run: bool) -> Res
         if !wanted.accepts(&item.scope) {
             continue;
         }
+        at += 1;
+        progress.say(format!("{} — {at}/{total}", item.name));
         match compare(item, &remote) {
             State::Unchanged => {
                 same += 1;
@@ -434,6 +448,7 @@ pub fn push(backend: Option<&str>, wanted: Option<Wanted>, dry_run: bool) -> Res
             }
             state => {
                 if dry_run {
+                    progress.clear();
                     println!("  {} {:<28} would be sent", state.glyph(), item.name);
                 } else {
                     let envelope = Envelope::new(item.scope.clone(), item.payload.clone())
@@ -444,7 +459,9 @@ pub fn push(backend: Option<&str>, wanted: Option<Wanted>, dry_run: bool) -> Res
                             // back the way it came out, through the app.
                             kitbag_core::collect::Source::Command { .. } => None,
                         });
-                    match store.put(&item.name, &envelope) {
+                    let outcome = store.put(&item.name, &envelope);
+                    progress.clear();
+                    match outcome {
                         Ok(()) => println!("  {} {:<28} sent", state.glyph(), item.name),
                         Err(e) => {
                             println!("  ✗ {:<28} {}", item.name, root_cause(&e));
@@ -458,6 +475,7 @@ pub fn push(backend: Option<&str>, wanted: Option<Wanted>, dry_run: bool) -> Res
         }
     }
 
+    drop(progress);
     println!();
     if dry_run {
         println!("  {sent} to send, {same} already there. Nothing was written.");
@@ -491,7 +509,12 @@ fn root_cause(e: &anyhow::Error) -> String {
 /// Only the scopes this machine takes, and every file it would overwrite is
 /// kept first: a restore that quietly replaces something is the one operation
 /// here nobody can undo.
-pub fn restore(backend: Option<&str>, wanted: Option<Wanted>, dry_run: bool) -> Result<()> {
+pub fn restore(
+    backend: Option<&str>,
+    wanted: Option<Wanted>,
+    dry_run: bool,
+    colour: Colour,
+) -> Result<()> {
     let home = home();
     let config = Config::load_or_default(&config_path())?;
     let wanted = wanted.unwrap_or_else(|| config.wanted());
@@ -517,32 +540,77 @@ pub fn restore(backend: Option<&str>, wanted: Option<Wanted>, dry_run: bool) -> 
         })
         .collect();
 
+    let progress = ui::Progress::new(colour);
+    progress.say("opening the store");
     let store = open_store(backend)?;
+
     let mut written = 0usize;
     let mut same = 0usize;
     let mut unplaceable = Vec::new();
 
+    progress.say("reading what the store holds");
+    let listings = store.list()?;
+    let total = listings.len();
+
+    progress.clear();
     println!();
-    for listing in store.list()? {
-        let envelope = store.get(&listing.name)?;
-        if !wanted.accepts(&envelope.scope) {
+    for (at, listing) in listings.into_iter().enumerate() {
+        progress.say(format!("{} — {}/{total}", listing.name, at + 1));
+        let name = listing.name.as_str();
+
+        // Refusals that cost nothing come first. A store that reports the
+        // scope in its listing can have an item turned away without the item
+        // ever being fetched.
+        if listing.scope.as_ref().is_some_and(|s| !wanted.accepts(s)) {
             continue;
         }
+
         // State an application owns goes back through the application, which
-        // is the only thing that knows what to do with it.
-        if let Some(restore) = commands.get(listing.name.as_str()) {
-            if dry_run {
-                println!("  ~ {:<28} would be piped into `{restore}`", listing.name);
+        // is the only thing that knows what to do with it. A dry run only says
+        // so, and saying so does not need the bytes.
+        if let Some(restore) = commands.get(name) {
+            if dry_run && listing.scope.is_some() {
+                progress.clear();
+                println!("  ~ {name:<28} would be piped into `{restore}`");
                 written += 1;
                 continue;
             }
+            let envelope = store.get(name)?;
+            if !wanted.accepts(&envelope.scope) {
+                continue;
+            }
+            if dry_run {
+                progress.clear();
+                println!("  ~ {name:<28} would be piped into `{restore}`");
+                written += 1;
+                continue;
+            }
+            progress.clear();
             match pipe_into(restore, &envelope.payload) {
                 Ok(()) => {
-                    println!("  + {:<28} into `{restore}`", listing.name);
+                    println!("  + {name:<28} into `{restore}`");
                     written += 1;
                 }
-                Err(e) => println!("  ! {:<28} {e}", listing.name),
+                Err(e) => println!("  ! {name:<28} {e}"),
             }
+            continue;
+        }
+
+        // A file already here, identical to what the store holds, needs nothing
+        // fetched to establish that: the store reported the hash, and hashing
+        // what is on disk is free beside a round trip to the vault.
+        if let (Some(dest), Some(there)) = (known.get(name), listing.payload_hash.as_deref()) {
+            if std::fs::read(dest)
+                .map(|bytes| kitbag_core::payload_hash(&bytes) == there)
+                .unwrap_or(false)
+            {
+                same += 1;
+                continue;
+            }
+        }
+
+        let envelope = store.get(name)?;
+        if !wanted.accepts(&envelope.scope) {
             continue;
         }
 
@@ -551,7 +619,7 @@ pub fn restore(backend: Option<&str>, wanted: Option<Wanted>, dry_run: bool) -> 
         // machine where the file does not exist yet, which is most of them.
         let dest = match envelope.destination(&home) {
             Some(path) => path,
-            None => match known.get(listing.name.as_str()) {
+            None => match known.get(name) {
                 Some(path) => path.to_path_buf(),
                 None => {
                     unplaceable.push(listing.name.clone());
@@ -569,6 +637,7 @@ pub fn restore(backend: Option<&str>, wanted: Option<Wanted>, dry_run: bool) -> 
             continue;
         }
         if dry_run {
+            progress.clear();
             println!(
                 "  ~ {:<28} would be written to {}",
                 listing.name,
@@ -580,6 +649,7 @@ pub fn restore(backend: Option<&str>, wanted: Option<Wanted>, dry_run: bool) -> 
 
         let kept = place(dest, &envelope.payload)
             .with_context(|| format!("writing {}", pretty(dest, &home)))?;
+        progress.clear();
         match kept {
             Some(backup) => println!(
                 "  ~ {:<28} {} — kept the old one at {}",
@@ -592,6 +662,7 @@ pub fn restore(backend: Option<&str>, wanted: Option<Wanted>, dry_run: bool) -> 
         written += 1;
     }
 
+    drop(progress);
     println!();
     if dry_run {
         println!("  {written} to write, {same} already here. Nothing was written.");
