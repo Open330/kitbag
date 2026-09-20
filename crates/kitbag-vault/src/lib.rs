@@ -95,6 +95,11 @@ impl FromStr for BackendKind {
 }
 
 impl BackendKind {
+    /// The store named, or the one a machine would use by default.
+    pub fn from_str_or_default(name: Option<&str>) -> Result<Self> {
+        name.unwrap_or("bw").parse()
+    }
+
     pub fn open(self) -> Result<Box<dyn Backend>> {
         match self {
             BackendKind::Memory => Ok(Box::new(MemoryBackend::default())),

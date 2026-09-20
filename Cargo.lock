@@ -273,6 +273,7 @@ dependencies = [
  "kitbag-core",
  "kitbag-providers",
  "kitbag-vault",
+ "serde_json",
  "tempfile",
 ]
 

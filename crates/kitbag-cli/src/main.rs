@@ -4,6 +4,7 @@
 //! be argued with before it is implemented. Every command that would change
 //! something says what it would do and stops unless told otherwise.
 
+mod check;
 mod run;
 mod ui;
 
@@ -180,6 +181,8 @@ fn main() -> Result<()> {
             ref scope,
             ref owner,
         } => run::track(path, scope.as_deref(), owner.as_deref())?,
+        Command::Doctor => check::doctor(cli.backend.as_deref(), cli.json)?,
+        Command::Lint { ref paths } => check::lint(paths, cli.json)?,
         Command::Push { dry_run } => run::push(cli.backend.as_deref(), wanted, dry_run)?,
         Command::Restore { dry_run } => run::restore(cli.backend.as_deref(), wanted, dry_run)?,
         other => {
