@@ -30,6 +30,9 @@ pub struct Item {
     pub path: PathBuf,
     pub payload: Vec<u8>,
     pub source: Source,
+    /// The export is not byte-stable, so comparing it says nothing. See
+    /// [`crate::config::Track::volatile`].
+    pub volatile: bool,
 }
 
 impl Item {
@@ -159,7 +162,8 @@ fn collect_track(track: &Track, home: &Path, out: &mut Collected) {
 ///
 /// The payload is whatever the command writes, byte for byte. Whether it is
 /// stable between runs is the application's business: one whose output changes
-/// every time will simply be sent every time, which is the honest outcome.
+/// every time is sent every time, which is the honest outcome. Mark such a
+/// track `volatile` and the report stops calling that difference a change.
 fn collect_command(track: &Track, exported: &crate::config::Exported, out: &mut Collected) {
     let name = match &track.name {
         Some(n) => n.clone(),
@@ -196,6 +200,7 @@ fn collect_command(track: &Track, exported: &crate::config::Exported, out: &mut 
             source: Source::Command {
                 restore: exported.restore.clone(),
             },
+            volatile: track.volatile,
         }),
         Ok(o) if o.status.success() => out.skipped.push(Skipped {
             path: PathBuf::from(&exported.export),
@@ -250,6 +255,7 @@ fn read_item(path: &Path, track: &Track, home: &Path) -> Result<Item, Reason> {
         path: path.to_path_buf(),
         payload,
         source: Source::File(path.to_path_buf()),
+        volatile: track.volatile,
     })
 }
 

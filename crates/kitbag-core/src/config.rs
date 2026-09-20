@@ -56,6 +56,12 @@ pub struct Track {
     /// What a `mixed` item is mixed from, for the report.
     #[serde(default)]
     pub spans: Vec<String>,
+    /// Set when the export is not byte-stable: tokens that rotate on their own,
+    /// a timestamp baked into the format. Comparing such an item against the
+    /// store answers "different" every time and means nothing by it, so kitbag
+    /// stops claiming it changed and reports that it cannot tell.
+    #[serde(default)]
+    pub volatile: bool,
 }
 
 #[derive(Debug, thiserror::Error)]

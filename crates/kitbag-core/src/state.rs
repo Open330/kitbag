@@ -17,8 +17,10 @@ pub enum State {
     Changed,
     /// Nothing to send.
     Unchanged,
-    /// Only building the payload would tell, and building it is not free —
-    /// an account bundle whose tokens rotate on their own, for instance.
+    /// No answer is available. Either building the payload is not free, or it
+    /// was built and says nothing: an export whose bytes differ every run
+    /// differs from the store every run, and "changed" would be a claim about
+    /// the machine that nobody checked.
     Unknown,
 }
 
@@ -42,6 +44,10 @@ pub fn compare(item: &Item, remote: &Remote) -> State {
     match remote.get(&item.name) {
         None => State::New,
         Some(None) => State::Unknown,
+        // The hashes will differ, and the difference carries no information:
+        // saying "changed" would make the report unreadable by making three
+        // items shout on every run.
+        Some(_) if item.volatile => State::Unknown,
         Some(Some(there)) if *there == here => State::Unchanged,
         Some(Some(_)) => State::Changed,
     }
@@ -74,6 +80,7 @@ mod tests {
             path: PathBuf::from("/x"),
             payload: body.as_bytes().to_vec(),
             source: crate::collect::Source::File(PathBuf::from("/x")),
+            volatile: false,
         }
     }
 
@@ -111,6 +118,32 @@ mod tests {
             ("env:gone".to_string(), Some(hash("y"))),
         ]);
         assert_eq!(orphans(&[item("env:a", "x")], &remote), vec!["env:gone"]);
+    }
+
+    #[test]
+    fn a_volatile_item_is_never_called_changed() {
+        // Its export differs every run by construction, so the difference is
+        // not news. Three of these turned every status report into noise.
+        let mut volatile = item("app:tokens", "built at 09:00");
+        volatile.volatile = true;
+        let remote = Remote::from([("app:tokens".to_string(), Some(hash("built at 08:59")))]);
+        assert_eq!(compare(&volatile, &remote), State::Unknown);
+    }
+
+    #[test]
+    fn a_volatile_item_the_store_has_never_seen_is_still_new() {
+        // "Cannot tell" is about comparing. With nothing to compare against
+        // there is no doubt: it has never been sent.
+        let mut volatile = item("app:tokens", "x");
+        volatile.volatile = true;
+        assert_eq!(compare(&volatile, &Remote::new()), State::New);
+    }
+
+    #[test]
+    fn a_stable_item_is_still_compared_normally() {
+        let remote = Remote::from([("env:a".to_string(), Some(hash("x")))]);
+        assert_eq!(compare(&item("env:a", "x"), &remote), State::Unchanged);
+        assert_eq!(compare(&item("env:a", "y"), &remote), State::Changed);
     }
 
     #[test]

@@ -166,7 +166,7 @@ fn tally(groups: &[Group]) -> Vec<String> {
             None => {}
         }
     }
-    let labels = ["new", "changed", "unchanged", "to build"];
+    let labels = ["new", "changed", "unchanged", "not comparable"];
     let marks = [Mark::New, Mark::Changed, Mark::Unchanged, Mark::Unknown];
     counts
         .iter()
