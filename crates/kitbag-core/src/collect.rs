@@ -11,6 +11,16 @@ use crate::config::{derive_name, expand, Config, Track};
 use crate::marker;
 use crate::scope::Scope;
 
+/// Where an item's payload came from, and how it goes back.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Source {
+    /// A file, which is also where a restore writes it.
+    File(PathBuf),
+    /// An application, asked for its own state. The string is the command that
+    /// takes it back.
+    Command { restore: String },
+}
+
 /// One thing found on the machine, ready to be compared or sent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Item {
@@ -19,12 +29,16 @@ pub struct Item {
     pub owner: Option<String>,
     pub path: PathBuf,
     pub payload: Vec<u8>,
+    pub source: Source,
 }
 
 impl Item {
     /// What is inside, in the terms of whatever it is: the variable names of an
     /// env file, the size of a binary. Never a value.
     pub fn detail(&self) -> String {
+        if let Source::Command { .. } = self.source {
+            return format!("{} bytes from a command", self.payload.len());
+        }
         match std::str::from_utf8(&self.payload) {
             Ok(text) => {
                 let keys = key_names(text);
@@ -60,6 +74,10 @@ pub enum Reason {
     /// Listed in the config, absent from the disk. Usually a machine that has
     /// not been set up yet rather than a typo, so it is worth saying.
     Missing,
+    /// A command-sourced item with no name: there is no path to take one from.
+    Unnamed,
+    /// The command ran and said nothing, which is not state worth keeping.
+    Empty,
     Unreadable(String),
 }
 
@@ -70,6 +88,8 @@ impl Reason {
             Reason::UnknownScope(s) => format!("unknown scope `{s}`"),
             Reason::Local => "machine-local by its own marker".into(),
             Reason::Missing => "listed here, but not on this machine".into(),
+            Reason::Unnamed => "a command-sourced item needs a name".into(),
+            Reason::Empty => "the command produced nothing".into(),
             Reason::Unreadable(e) => format!("could not be read: {e}"),
         }
     }
@@ -92,8 +112,12 @@ pub fn collect(config: &Config, home: &Path) -> Collected {
 }
 
 fn collect_track(track: &Track, home: &Path, out: &mut Collected) {
+    if let Some(exported) = &track.command {
+        collect_command(track, exported, out);
+        return;
+    }
     let Some(pattern) = track.path.as_deref() else {
-        return; // command-sourced items are not files; not this function's job
+        return;
     };
     let expanded = expand(pattern, home);
 
@@ -131,6 +155,69 @@ fn collect_track(track: &Track, home: &Path, out: &mut Collected) {
     }
 }
 
+/// Ask an application for its own state.
+///
+/// The payload is whatever the command writes, byte for byte. Whether it is
+/// stable between runs is the application's business: one whose output changes
+/// every time will simply be sent every time, which is the honest outcome.
+fn collect_command(track: &Track, exported: &crate::config::Exported, out: &mut Collected) {
+    let name = match &track.name {
+        Some(n) => n.clone(),
+        None => {
+            out.skipped.push(Skipped {
+                path: PathBuf::from(&exported.export),
+                reason: Reason::Unnamed,
+            });
+            return;
+        }
+    };
+    let Some(scope) = track.declared_scope() else {
+        out.skipped.push(Skipped {
+            path: PathBuf::from(&exported.export),
+            reason: Reason::Unmarked,
+        });
+        return;
+    };
+    if scope == Scope::Local {
+        return;
+    }
+
+    match std::process::Command::new("sh")
+        .arg("-c")
+        .arg(&exported.export)
+        .output()
+    {
+        Ok(o) if o.status.success() && !o.stdout.is_empty() => out.items.push(Item {
+            name,
+            scope,
+            owner: track.owner.clone(),
+            path: PathBuf::from(&exported.export),
+            payload: o.stdout,
+            source: Source::Command {
+                restore: exported.restore.clone(),
+            },
+        }),
+        Ok(o) if o.status.success() => out.skipped.push(Skipped {
+            path: PathBuf::from(&exported.export),
+            reason: Reason::Empty,
+        }),
+        Ok(o) => out.skipped.push(Skipped {
+            path: PathBuf::from(&exported.export),
+            reason: Reason::Unreadable(
+                String::from_utf8_lossy(&o.stderr)
+                    .lines()
+                    .next()
+                    .unwrap_or("the command failed")
+                    .to_string(),
+            ),
+        }),
+        Err(e) => out.skipped.push(Skipped {
+            path: PathBuf::from(&exported.export),
+            reason: Reason::Unreadable(e.to_string()),
+        }),
+    }
+}
+
 fn read_item(path: &Path, track: &Track, home: &Path) -> Result<Item, Reason> {
     let payload = std::fs::read(path).map_err(|e| Reason::Unreadable(e.to_string()))?;
 
@@ -162,6 +249,7 @@ fn read_item(path: &Path, track: &Track, home: &Path) -> Result<Item, Reason> {
         owner: markers.owner.or_else(|| track.owner.clone()),
         path: path.to_path_buf(),
         payload,
+        source: Source::File(path.to_path_buf()),
     })
 }
 
@@ -304,6 +392,88 @@ mod tests {
             h.path(),
         );
         assert_eq!(got.skipped[0].reason, Reason::Missing);
+    }
+
+    #[test]
+    fn an_application_is_asked_for_its_own_state() {
+        let h = home();
+        let got = collect(
+            &config(
+                r#"
+                [[track]]
+                name = "app:accounts"
+                scope = "mixed"
+                spans = ["personal", "work"]
+                command = { export = "printf 'bundle'", restore = "acct import -" }
+            "#,
+            ),
+            h.path(),
+        );
+
+        assert_eq!(got.items.len(), 1);
+        assert_eq!(got.items[0].name, "app:accounts");
+        assert_eq!(got.items[0].payload, b"bundle");
+        assert_eq!(
+            got.items[0].source,
+            Source::Command {
+                restore: "acct import -".into()
+            }
+        );
+        assert!(matches!(got.items[0].scope, Scope::Mixed { .. }));
+    }
+
+    #[test]
+    fn a_command_that_says_nothing_is_not_state() {
+        let h = home();
+        let got = collect(
+            &config(
+                r#"
+                [[track]]
+                name = "app:nothing"
+                scope = "personal"
+                command = { export = "true", restore = "cat" }
+            "#,
+            ),
+            h.path(),
+        );
+        assert!(got.items.is_empty());
+        assert_eq!(got.skipped[0].reason, Reason::Empty);
+    }
+
+    #[test]
+    fn a_command_that_fails_says_what_it_said() {
+        let h = home();
+        let got = collect(
+            &config(
+                r#"
+                [[track]]
+                name = "app:broken"
+                scope = "personal"
+                command = { export = "echo 'not logged in' >&2; exit 1", restore = "cat" }
+            "#,
+            ),
+            h.path(),
+        );
+        match &got.skipped[0].reason {
+            Reason::Unreadable(why) => assert!(why.contains("not logged in"), "{why}"),
+            other => panic!("expected the reason, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_command_with_no_name_has_nowhere_to_be_filed() {
+        let h = home();
+        let got = collect(
+            &config(
+                r#"
+                [[track]]
+                scope = "personal"
+                command = { export = "echo x", restore = "cat" }
+            "#,
+            ),
+            h.path(),
+        );
+        assert_eq!(got.skipped[0].reason, Reason::Unnamed);
     }
 
     #[test]

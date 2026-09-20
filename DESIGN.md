@@ -394,6 +394,7 @@ The port is largely reading files that already exist.
 | Module | What it needs | Why a provider and not a script |
 | --- | --- | --- |
 | claude | merge a JSON settings file, link a manifest of skills | merging is the hard part, and it is the same merge every time |
+| aas, otpeek | state only the application can hand over | a command pair: `export` to stdout, `restore` from stdin |
 | codex | merge a TOML config | same |
 | cship, editor | download a release, verify a checksum, place a binary | the checksum is the point; a script that forgets it is worse than no script |
 | node, rust, python | global packages (`npm -g`, `cargo`, `uv`) | a list of names, once the runtime exists |

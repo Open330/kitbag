@@ -20,6 +20,18 @@ pub struct Config {
     pub tracks: Vec<Track>,
 }
 
+/// State an application keeps for itself, reachable only through the
+/// application: an account bundle, an OTP vault, a browser profile.
+///
+/// `export` writes it to stdout; `restore` reads it from stdin. The tool that
+/// owns the data is the only thing that knows how to hand it over and how to
+/// take it back, so kitbag asks it rather than copying files out from under it.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Exported {
+    pub export: String,
+    pub restore: String,
+}
+
 /// One thing to keep: a file, a set of files, or a command pair.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Track {
@@ -37,6 +49,13 @@ pub struct Track {
     /// file; a glob names each match after its own path.
     #[serde(default)]
     pub name: Option<String>,
+    /// For state that is not a file. Needs a name, since there is no path to
+    /// take one from.
+    #[serde(default)]
+    pub command: Option<Exported>,
+    /// What a `mixed` item is mixed from, for the report.
+    #[serde(default)]
+    pub spans: Vec<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -93,7 +112,14 @@ impl Track {
     pub fn declared_scope(&self) -> Option<Scope> {
         match self.scope.as_deref() {
             None | Some("auto") => None,
-            Some(other) => other.parse().ok(),
+            Some(other) => match other.parse().ok()? {
+                // A `mixed` item has to say what it is mixed from, or the one
+                // scope meaning "I could not separate this" hides what is in it.
+                Scope::Mixed { .. } => Some(Scope::Mixed {
+                    spans: self.spans.clone(),
+                }),
+                scope => Some(scope),
+            },
         }
     }
 }
@@ -166,6 +192,26 @@ mod tests {
         assert_eq!(cfg.tracks[0].declared_scope(), None); // auto: read the file
         assert_eq!(cfg.tracks[1].declared_scope(), Some(Scope::Work));
         assert_eq!(cfg.tracks[1].name.as_deref(), Some("file:x-keychain"));
+    }
+
+    #[test]
+    fn an_application_can_be_asked_for_its_own_state() {
+        let cfg: Config = toml::from_str(
+            r#"
+            [[track]]
+            name = "app:accounts"
+            scope = "mixed"
+            spans = ["personal", "work"]
+            command = { export = "acct export --all", restore = "acct import -" }
+        "#,
+        )
+        .unwrap();
+
+        let t = &cfg.tracks[0];
+        assert_eq!(t.name.as_deref(), Some("app:accounts"));
+        assert_eq!(t.command.as_ref().unwrap().export, "acct export --all");
+        assert_eq!(t.spans, ["personal", "work"]);
+        assert!(matches!(t.declared_scope(), Some(Scope::Mixed { .. })));
     }
 
     #[test]

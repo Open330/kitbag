@@ -73,6 +73,7 @@ mod tests {
             owner: None,
             path: PathBuf::from("/x"),
             payload: body.as_bytes().to_vec(),
+            source: crate::collect::Source::File(PathBuf::from("/x")),
         }
     }
 

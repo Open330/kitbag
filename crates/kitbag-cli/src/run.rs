@@ -434,7 +434,12 @@ pub fn push(backend: Option<&str>, wanted: Option<Wanted>, dry_run: bool) -> Res
                 } else {
                     let envelope = Envelope::new(item.scope.clone(), item.payload.clone())
                         .with_owner(item.owner.clone())
-                        .with_path(Some(pretty(&item.path, &home)));
+                        .with_path(match &item.source {
+                            kitbag_core::collect::Source::File(path) => Some(pretty(path, &home)),
+                            // State an application owns has no path: it goes
+                            // back the way it came out, through the app.
+                            kitbag_core::collect::Source::Command { .. } => None,
+                        });
                     store
                         .put(&item.name, &envelope)
                         .with_context(|| format!("sending {}", item.name))?;
@@ -474,7 +479,21 @@ pub fn restore(backend: Option<&str>, wanted: Option<Wanted>, dry_run: bool) -> 
     // Where each name belongs, learnt from what this machine already tracks.
     let known: BTreeMap<&str, &Path> = items
         .iter()
-        .map(|i| (i.name.as_str(), i.path.as_path()))
+        .filter_map(|i| match &i.source {
+            kitbag_core::collect::Source::File(path) => Some((i.name.as_str(), path.as_path())),
+            kitbag_core::collect::Source::Command { .. } => None,
+        })
+        .collect();
+
+    // And which names go back through a command rather than onto a path.
+    let commands: BTreeMap<&str, &str> = items
+        .iter()
+        .filter_map(|i| match &i.source {
+            kitbag_core::collect::Source::Command { restore } => {
+                Some((i.name.as_str(), restore.as_str()))
+            }
+            kitbag_core::collect::Source::File(_) => None,
+        })
         .collect();
 
     let store = open_store(backend)?;
@@ -488,6 +507,24 @@ pub fn restore(backend: Option<&str>, wanted: Option<Wanted>, dry_run: bool) -> 
         if !wanted.accepts(&envelope.scope) {
             continue;
         }
+        // State an application owns goes back through the application, which
+        // is the only thing that knows what to do with it.
+        if let Some(restore) = commands.get(listing.name.as_str()) {
+            if dry_run {
+                println!("  ~ {:<28} would be piped into `{restore}`", listing.name);
+                written += 1;
+                continue;
+            }
+            match pipe_into(restore, &envelope.payload) {
+                Ok(()) => {
+                    println!("  + {:<28} into `{restore}`", listing.name);
+                    written += 1;
+                }
+                Err(e) => println!("  ! {:<28} {e}", listing.name),
+            }
+            continue;
+        }
+
         // Where it belongs: what the envelope says, else where this machine
         // already keeps it. The first is what makes a restore work on a
         // machine where the file does not exist yet, which is most of them.
@@ -573,6 +610,34 @@ fn place(dest: &Path, payload: &[u8]) -> Result<Option<PathBuf>> {
     std::fs::write(dest, payload)?;
     std::fs::set_permissions(dest, std::fs::Permissions::from_mode(0o600))?;
     Ok(kept)
+}
+
+/// Hand a payload to a command on its stdin.
+fn pipe_into(command: &str, payload: &[u8]) -> Result<()> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let mut child = Command::new("sh")
+        .arg("-c")
+        .arg(command)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin was piped")
+        .write_all(payload)?;
+    let out = child.wait_with_output()?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        anyhow::bail!(
+            "{}",
+            err.lines().next().unwrap_or("the command failed").trim()
+        );
+    }
+    Ok(())
 }
 
 fn backup_beside(path: &Path) -> PathBuf {
