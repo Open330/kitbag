@@ -624,6 +624,28 @@ pub fn restore(
             continue;
         }
 
+        // The item says how it goes back. This is reached only when this
+        // machine does not already track it — a machine being restored does
+        // not have the application installed, so its own config cannot know —
+        // and the command is named before it runs, because it came from the
+        // store rather than from anything here.
+        if let Some(restore) = envelope.restore.clone() {
+            progress.clear();
+            if dry_run {
+                println!("  ~ {name:<28} would be piped into `{restore}`  (from the store)");
+                written += 1;
+                continue;
+            }
+            match pipe_into(&restore, &envelope.payload) {
+                Ok(()) => {
+                    println!("  + {name:<28} into `{restore}`  (from the store)");
+                    written += 1;
+                }
+                Err(e) => println!("  ! {name:<28} {e}"),
+            }
+            continue;
+        }
+
         // Where it belongs: what the envelope says, else where this machine
         // already keeps it. The first is what makes a restore work on a
         // machine where the file does not exist yet, which is most of them.
@@ -691,7 +713,9 @@ pub fn restore(
     }
     if !unplaceable.is_empty() {
         println!();
-        println!("  in the store, but this machine does not track them, so there is nowhere to put them:");
+        println!(
+            "  in the store, but with no path and no way back, so there is nowhere to put them:"
+        );
         for name in &unplaceable {
             println!("  · {name}");
         }

@@ -76,6 +76,10 @@ pub fn envelope_for(item: &Item, home: &Path) -> crate::Envelope {
             Source::Command { .. } => None,
             Source::File(path) => Some(crate::config::shorten(path, home)),
         })
+        .with_restore(match &item.source {
+            Source::Command { restore } => Some(restore.clone()),
+            Source::File(_) => None,
+        })
 }
 
 /// Why something on disk was passed over.

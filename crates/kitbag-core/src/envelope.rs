@@ -46,6 +46,16 @@ pub struct Envelope {
     /// needs to know is the one restoring, and a machine being restored has no
     /// config yet.
     pub platform: Vec<String>,
+    /// How state an application owns goes back into it, for an item that has
+    /// no path. It travels because the machine that has to run it is the one
+    /// being restored, and a machine being restored does not have the
+    /// application installed yet — so its own config cannot know.
+    ///
+    /// This is a command a store hands over and this machine runs. The store
+    /// is the one holding every secret on it already, so it is not a new
+    /// thing to trust; it is a new thing it can do, which is why `restore`
+    /// names the command it is about to run before running it.
+    pub restore: Option<String>,
     pub payload: Vec<u8>,
     /// Headers kitbag did not recognise, kept so a newer writer does not lose
     /// information when an older reader rewrites the item.
@@ -76,6 +86,7 @@ impl Envelope {
             path: None,
             payload,
             platform: Vec::new(),
+            restore: None,
             extra: BTreeMap::new(),
         }
     }
@@ -107,6 +118,11 @@ impl Envelope {
 
     pub fn sha256(&self) -> String {
         payload_hash(&self.payload)
+    }
+
+    pub fn with_restore(mut self, restore: Option<String>) -> Self {
+        self.restore = restore;
+        self
     }
 
     pub fn with_platform(mut self, platform: Vec<String>) -> Self {
@@ -159,6 +175,11 @@ impl Envelope {
         if !self.platform.is_empty() {
             out.push_str(&format!("platform: {}\n", self.platform.join(", ")));
         }
+        if let Some(restore) = &self.restore {
+            // A header is one line, and a command need not be: escape rather
+            // than truncate, so what comes back is what went in.
+            out.push_str(&format!("restore: {}\n", escape(restore)));
+        }
         out.push_str(&format!("encoding: {encoding}\n"));
         out.push_str(&format!("sha256: {}\n", self.sha256()));
         for (k, v) in &self.extra {
@@ -182,6 +203,7 @@ impl Envelope {
         let mut owner = None;
         let mut path = None;
         let mut platform: Vec<String> = Vec::new();
+        let mut restore = None;
         let mut encoding = "utf8".to_string();
         let mut sha = None;
         let mut extra = BTreeMap::new();
@@ -202,6 +224,7 @@ impl Envelope {
                 }
                 "owner" => owner = Some(v),
                 "path" => path = Some(v),
+                "restore" => restore = Some(unescape(&v)),
                 "platform" => {
                     platform = v
                         .split(',')
@@ -236,6 +259,7 @@ impl Envelope {
             path,
             payload,
             platform,
+            restore,
             extra,
         };
 
@@ -367,6 +391,34 @@ mod tests {
     }
 }
 
+/// A header holds one line. Backslash and newline are the only two characters
+/// that cannot appear as themselves, so those two are all that is escaped.
+fn escape(text: &str) -> String {
+    text.replace('\\', "\\\\").replace('\n', "\\n")
+}
+
+fn unescape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('\\') => out.push('\\'),
+            // Anything else was never written by `escape`, so it is itself.
+            Some(other) => {
+                out.push('\\');
+                out.push(other);
+            }
+            None => out.push('\\'),
+        }
+    }
+    out
+}
+
 /// What [`Envelope::sha256`] reports, for bytes that are not in an envelope
 /// yet: the hash covers the payload and nothing else, so a file on disk can be
 /// compared against what a store says it holds without fetching it.
@@ -374,4 +426,59 @@ pub fn payload_hash(bytes: &[u8]) -> String {
     let mut h = Sha256::new();
     h.update(bytes);
     format!("{:x}", h.finalize())
+}
+
+#[cfg(test)]
+mod restore_tests {
+    use super::*;
+    use crate::scope::Scope;
+
+    #[test]
+    fn a_way_back_travels_with_the_item() {
+        let sent = Envelope::new(Scope::Personal, b"bundle".to_vec())
+            .with_restore(Some("app import -".to_string()));
+        let back = Envelope::parse(&sent.to_text()).unwrap();
+        assert_eq!(back.restore.as_deref(), Some("app import -"));
+    }
+
+    #[test]
+    fn a_command_of_several_lines_survives_being_one_header() {
+        // A header is one line and a command need not be. Escaping rather than
+        // truncating means what comes back is what went in — a restore that
+        // lost its second line would run half of itself.
+        let command = "set -e\ntar -xzf - -C \"$HOME\"\necho done";
+        let sent =
+            Envelope::new(Scope::Personal, b"x".to_vec()).with_restore(Some(command.to_string()));
+
+        let text = sent.to_text();
+        assert_eq!(
+            text.lines().filter(|l| l.starts_with("restore:")).count(),
+            1,
+            "still one header"
+        );
+        assert_eq!(
+            Envelope::parse(&text).unwrap().restore.as_deref(),
+            Some(command)
+        );
+    }
+
+    #[test]
+    fn a_backslash_in_a_command_is_not_eaten() {
+        // `"#` appears inside, so the raw string needs a longer fence.
+        let command = r##"sed -i "" "s#a#\"b\"#" file"##;
+        let sent =
+            Envelope::new(Scope::Personal, b"x".to_vec()).with_restore(Some(command.to_string()));
+        assert_eq!(
+            Envelope::parse(&sent.to_text()).unwrap().restore.as_deref(),
+            Some(command),
+            "the OTPeek restore is exactly this shape"
+        );
+    }
+
+    #[test]
+    fn an_item_with_no_way_back_says_nothing() {
+        let plain = Envelope::new(Scope::Personal, b"x".to_vec());
+        assert!(!plain.to_text().contains("restore:"));
+        assert_eq!(Envelope::parse(&plain.to_text()).unwrap().restore, None);
+    }
 }

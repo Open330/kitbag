@@ -162,3 +162,46 @@ platform = ["windows"]
         "what does not, is not:\n{out}"
     );
 }
+
+#[test]
+fn a_machine_that_tracks_nothing_still_learns_how_state_goes_back() {
+    // The restore command used to live only in the restoring machine's config,
+    // and that config is built from what is already installed here. A machine
+    // being restored has none of it installed, so it could never be told how to
+    // put an application's state back — the one case a restore exists for.
+    let sender = tempfile::tempdir().expect("sender");
+    let state = tempfile::tempdir().expect("state");
+
+    std::fs::write(
+        sender.path().join("machine.toml"),
+        r#"scopes = ["personal"]
+
+[[track]]
+name = "app:thing"
+scope = "personal"
+command = { export = "echo carried", restore = "cat > \"$HOME/came-back.txt\"" }
+"#,
+    )
+    .unwrap();
+    kitbag(sender.path(), state.path(), &["push", "--backend", "bw"]);
+
+    // A different machine: it holds nothing and tracks nothing.
+    let fresh = tempfile::tempdir().expect("fresh");
+    std::fs::write(
+        fresh.path().join("machine.toml"),
+        "scopes = [\"personal\"]\n",
+    )
+    .unwrap();
+
+    let out = kitbag(fresh.path(), state.path(), &["restore", "--backend", "bw"]);
+
+    assert!(
+        out.contains("from the store"),
+        "and it says where the command came from:\n{out}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(fresh.path().join("came-back.txt")).unwrap(),
+        "carried\n",
+        "the application's state went back through the application:\n{out}"
+    );
+}
