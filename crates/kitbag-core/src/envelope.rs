@@ -41,6 +41,11 @@ pub struct Envelope {
     /// file does not exist yet - the whole point of a restore - has no other
     /// way to know, since there is nothing on disk to learn it from.
     pub path: Option<String>,
+    /// The platforms this belongs on, empty meaning all of them. It travels in
+    /// the envelope rather than in a machine's config because the machine that
+    /// needs to know is the one restoring, and a machine being restored has no
+    /// config yet.
+    pub platform: Vec<String>,
     pub payload: Vec<u8>,
     /// Headers kitbag did not recognise, kept so a newer writer does not lose
     /// information when an older reader rewrites the item.
@@ -70,6 +75,7 @@ impl Envelope {
             owner: None,
             path: None,
             payload,
+            platform: Vec::new(),
             extra: BTreeMap::new(),
         }
     }
@@ -103,6 +109,17 @@ impl Envelope {
         payload_hash(&self.payload)
     }
 
+    pub fn with_platform(mut self, platform: Vec<String>) -> Self {
+        self.platform = platform;
+        self
+    }
+
+    /// Is this machine one of the ones this belongs on? An item that names no
+    /// platform belongs everywhere, which is almost all of them.
+    pub fn belongs_on(&self, platform: &str) -> bool {
+        self.platform.is_empty() || self.platform.iter().any(|p| p == platform)
+    }
+
     pub fn to_text(&self) -> String {
         let utf8 = std::str::from_utf8(&self.payload).ok();
         let (encoding, body) = match utf8 {
@@ -127,6 +144,9 @@ impl Envelope {
         if let Some(path) = &self.path {
             out.push_str(&format!("path: {path}\n"));
         }
+        if !self.platform.is_empty() {
+            out.push_str(&format!("platform: {}\n", self.platform.join(", ")));
+        }
         out.push_str(&format!("encoding: {encoding}\n"));
         out.push_str(&format!("sha256: {}\n", self.sha256()));
         for (k, v) in &self.extra {
@@ -149,6 +169,7 @@ impl Envelope {
         let mut spans: Vec<String> = Vec::new();
         let mut owner = None;
         let mut path = None;
+        let mut platform: Vec<String> = Vec::new();
         let mut encoding = "utf8".to_string();
         let mut sha = None;
         let mut extra = BTreeMap::new();
@@ -169,6 +190,14 @@ impl Envelope {
                 }
                 "owner" => owner = Some(v),
                 "path" => path = Some(v),
+                "platform" => {
+                    platform = v
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|p| !p.is_empty())
+                        .map(str::to_string)
+                        .collect()
+                }
                 "encoding" => encoding = v,
                 "sha256" => sha = Some(v),
                 _ => {
@@ -194,6 +223,7 @@ impl Envelope {
             owner,
             path,
             payload,
+            platform,
             extra,
         };
 
@@ -210,6 +240,36 @@ impl Envelope {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_platform_travels_with_the_item() {
+        let sent = Envelope::new(Scope::Personal, b"x".to_vec())
+            .with_platform(vec!["macos".into(), "linux".into()]);
+        let back = Envelope::parse(&sent.to_text()).unwrap();
+        assert_eq!(
+            back.platform,
+            vec!["macos".to_string(), "linux".to_string()]
+        );
+    }
+
+    #[test]
+    fn naming_no_platform_means_every_platform() {
+        let anywhere = Envelope::new(Scope::Personal, b"x".to_vec());
+        assert!(anywhere.belongs_on("macos"));
+        assert!(anywhere.belongs_on("windows"));
+        assert!(
+            !anywhere.to_text().contains("platform:"),
+            "and says nothing"
+        );
+    }
+
+    #[test]
+    fn an_item_of_one_platform_belongs_only_there() {
+        let mac = Envelope::new(Scope::Personal, b"x".to_vec()).with_platform(vec!["macos".into()]);
+        assert!(mac.belongs_on("macos"));
+        assert!(!mac.belongs_on("linux"));
+        assert!(!mac.belongs_on("windows"));
+    }
+
     use super::*;
 
     #[test]

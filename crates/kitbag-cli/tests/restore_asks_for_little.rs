@@ -117,3 +117,48 @@ fn a_file_that_differs_is_the_one_that_gets_fetched() {
         "the one that differs is fetched, and only that one"
     );
 }
+
+#[test]
+fn an_item_for_another_platform_is_not_written_here() {
+    // Tagged `windows`, so whatever this test is running on, it is not for
+    // here. A macOS keychain landing on a Linux server is the real case, and
+    // it looks like it worked.
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    let (home, state) = (home.path(), state.path());
+
+    std::fs::create_dir_all(home.join(".envs")).unwrap();
+    std::fs::write(home.join(".envs/here.env"), "# scope: personal\nA=1\n").unwrap();
+    std::fs::write(home.join(".envs/elsewhere.env"), "# scope: personal\nB=2\n").unwrap();
+    std::fs::write(
+        home.join("machine.toml"),
+        r#"scopes = ["personal"]
+
+[[track]]
+path = "~/.envs/here.env"
+
+[[track]]
+path = "~/.envs/elsewhere.env"
+platform = ["windows"]
+"#,
+    )
+    .unwrap();
+
+    kitbag(home, state, &["push", "--backend", "bw"]);
+
+    // Take both away, so a restore would write them if it were willing to.
+    std::fs::remove_file(home.join(".envs/here.env")).unwrap();
+    std::fs::remove_file(home.join(".envs/elsewhere.env")).unwrap();
+
+    let out = kitbag(home, state, &["restore", "--backend", "bw"]);
+
+    assert!(out.contains("for another platform"), "{out}");
+    assert!(
+        home.join(".envs/here.env").exists(),
+        "what belongs here is written:\n{out}"
+    );
+    assert!(
+        !home.join(".envs/elsewhere.env").exists(),
+        "what does not, is not:\n{out}"
+    );
+}

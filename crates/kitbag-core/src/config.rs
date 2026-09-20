@@ -56,6 +56,13 @@ pub struct Track {
     /// What a `mixed` item is mixed from, for the report.
     #[serde(default)]
     pub spans: Vec<String>,
+    /// The platforms this belongs on: `["macos"]` for a keychain or a bundle
+    /// addressed to `~/Library`. Empty means everywhere, which is most things.
+    /// It is recorded with the item, so the machine that has to act on it —
+    /// the one being restored — learns it from the store rather than from a
+    /// config it does not have yet.
+    #[serde(default)]
+    pub platform: Vec<String>,
     /// Set when the export is not byte-stable: tokens that rotate on their own,
     /// a timestamp baked into the format. Comparing such an item against the
     /// store answers "different" every time and means nothing by it, so kitbag

@@ -94,6 +94,7 @@ impl Backend for Pass {
                     // entry - so a `pass` store answers "I cannot say cheaply".
                     payload_hash: None,
                     scope: None,
+                    platform: None,
                 })
             })
             .collect())
@@ -204,6 +205,7 @@ impl Backend for Op {
                     name: i.get("title")?.as_str()?.to_string(),
                     payload_hash: None,
                     scope: None,
+                    platform: None,
                 })
             })
             .collect())

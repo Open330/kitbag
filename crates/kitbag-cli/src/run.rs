@@ -453,6 +453,7 @@ pub fn push(
                 } else {
                     let envelope = Envelope::new(item.scope.clone(), item.payload.clone())
                         .with_owner(item.owner.clone())
+                        .with_platform(item.platform.clone())
                         .with_path(match &item.source {
                             kitbag_core::collect::Source::File(path) => Some(pretty(path, &home)),
                             // State an application owns has no path: it goes
@@ -547,6 +548,9 @@ pub fn restore(
     let mut written = 0usize;
     let mut same = 0usize;
     let mut unplaceable = Vec::new();
+    // Items belonging to a platform that is not this one.
+    let mut elsewhere: Vec<String> = Vec::new();
+    let here = kitbag_core::this_platform();
 
     progress.say("reading what the store holds");
     let listings = store.list()?;
@@ -562,6 +566,17 @@ pub fn restore(
         // scope in its listing can have an item turned away without the item
         // ever being fetched.
         if listing.scope.as_ref().is_some_and(|s| !wanted.accepts(s)) {
+            continue;
+        }
+        // A macOS keychain, or a bundle addressed to ~/Library, is not state
+        // this machine has anywhere to put. Writing it anyway is worse than
+        // skipping it, because it looks like it worked.
+        if listing
+            .platform
+            .as_ref()
+            .is_some_and(|p| !p.is_empty() && !p.iter().any(|one| one == here))
+        {
+            elsewhere.push(listing.name.clone());
             continue;
         }
 
@@ -611,6 +626,10 @@ pub fn restore(
 
         let envelope = store.get(name)?;
         if !wanted.accepts(&envelope.scope) {
+            continue;
+        }
+        if !envelope.belongs_on(here) {
+            elsewhere.push(listing.name.clone());
             continue;
         }
 
@@ -668,6 +687,16 @@ pub fn restore(
         println!("  {written} to write, {same} already here. Nothing was written.");
     } else {
         println!("  {written} written, {same} already here.");
+    }
+    if !elsewhere.is_empty() {
+        println!();
+        println!(
+            "  {} for another platform, so not written here:",
+            elsewhere.len()
+        );
+        for name in &elsewhere {
+            println!("  · {name}");
+        }
     }
     if !unplaceable.is_empty() {
         println!();

@@ -207,6 +207,8 @@ impl Backend for Bw {
                         // vault in a browser; it costs nothing to read back,
                         // and the envelope stays the authority if they differ.
                         scope: field(item, "scope").and_then(|s| s.parse().ok()),
+                        platform: field(item, "platform")
+                            .map(|p| p.split(',').map(|s| s.trim().to_string()).collect()),
                     })
                 })
                 .collect()
@@ -356,6 +358,7 @@ fn item_body(name: &str, envelope: &Envelope, folder: &str, inline: bool) -> ser
         { "name": "scope", "value": envelope.scope.name(), "type": 0 },
         { "name": "owner", "value": envelope.owner.clone().unwrap_or_default(), "type": 0 },
         { "name": "hash", "value": envelope.sha256(), "type": 0 },
+        { "name": "platform", "value": envelope.platform.join(", "), "type": 0 },
     ]);
 
     serde_json::json!({

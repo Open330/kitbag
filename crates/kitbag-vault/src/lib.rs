@@ -54,6 +54,9 @@ pub struct Listing {
     /// from the listing is the difference between fetching everything to find
     /// out and fetching what is actually wanted.
     pub scope: Option<kitbag_core::Scope>,
+    /// The platforms the item belongs on, when the store can say without being
+    /// asked for the value. `None` is "cannot say cheaply", not "everywhere".
+    pub platform: Option<Vec<String>>,
 }
 
 pub trait Backend {
@@ -158,6 +161,7 @@ impl Backend for MemoryBackend {
                 Listing {
                     name: name.clone(),
                     payload_hash: parsed.as_ref().map(|e| e.sha256()),
+                    platform: parsed.as_ref().map(|e| e.platform.clone()),
                     scope: parsed.map(|e| e.scope),
                 }
             })

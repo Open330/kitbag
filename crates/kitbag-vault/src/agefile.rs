@@ -129,6 +129,7 @@ impl Backend for AgeFile {
                 let parsed = Envelope::parse(&text).ok();
                 Listing {
                     payload_hash: parsed.as_ref().map(|e| e.sha256()),
+                    platform: parsed.as_ref().map(|e| e.platform.clone()),
                     scope: parsed.map(|e| e.scope),
                     name,
                 }

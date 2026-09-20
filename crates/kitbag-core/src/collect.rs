@@ -33,6 +33,8 @@ pub struct Item {
     /// The export is not byte-stable, so comparing it says nothing. See
     /// [`crate::config::Track::volatile`].
     pub volatile: bool,
+    /// The platforms this belongs on, empty meaning all of them.
+    pub platform: Vec<String>,
 }
 
 impl Item {
@@ -201,6 +203,7 @@ fn collect_command(track: &Track, exported: &crate::config::Exported, out: &mut 
                 restore: exported.restore.clone(),
             },
             volatile: track.volatile,
+            platform: track.platform.clone(),
         }),
         Ok(o) if o.status.success() => out.skipped.push(Skipped {
             path: PathBuf::from(&exported.export),
@@ -256,6 +259,7 @@ fn read_item(path: &Path, track: &Track, home: &Path) -> Result<Item, Reason> {
         payload,
         source: Source::File(path.to_path_buf()),
         volatile: track.volatile,
+        platform: track.platform.clone(),
     })
 }
 
