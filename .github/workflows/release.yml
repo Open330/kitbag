@@ -11,7 +11,27 @@ permissions:
   contents: write
 
 jobs:
+  # A tag builds only if the tree it points at passes what `ci` asks of every
+  # push. Without this a red build still ships: eight releases went out over a
+  # clippy error that nobody was looking at, because the release job never
+  # asked and the CI run it was racing was a different run.
+  check:
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+
   build:
+    needs: check
     strategy:
       fail-fast: false
       matrix:

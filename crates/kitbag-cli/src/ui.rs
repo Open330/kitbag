@@ -199,6 +199,95 @@ fn wrap(text: &str, width: usize) -> Vec<String> {
     lines
 }
 
+/// A line that says what is being waited for.
+///
+/// The Bitwarden client costs over a second a call before it does any work, so
+/// a run that talks to it several times is a run that looks hung. This says
+/// what it is waiting for and keeps moving while it waits.
+///
+/// It draws on stderr, so stdout stays exactly what it was and a piped run is
+/// unchanged. When nobody is watching — not a terminal, `NO_COLOR`, `--color
+/// never` — it does nothing at all rather than filling a log with frames.
+pub struct Progress {
+    label: std::sync::Arc<std::sync::Mutex<String>>,
+    running: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+impl Progress {
+    pub fn new(colour: Colour) -> Self {
+        let label = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        let running = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+
+        let silent = colour == Colour::Never || !std::io::stderr().is_terminal();
+        if silent {
+            running.store(false, std::sync::atomic::Ordering::Relaxed);
+            return Self {
+                label,
+                running,
+                thread: None,
+            };
+        }
+
+        let thread = {
+            let label = std::sync::Arc::clone(&label);
+            let running = std::sync::Arc::clone(&running);
+            std::thread::spawn(move || {
+                use std::io::Write;
+                let mut frame = 0usize;
+                while running.load(std::sync::atomic::Ordering::Relaxed) {
+                    let text = label.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                    if !text.is_empty() {
+                        let mut err = std::io::stderr();
+                        let _ = write!(err, "\r\x1b[2m{}\x1b[0m {text}\x1b[K", FRAMES[frame]);
+                        let _ = err.flush();
+                    }
+                    frame = (frame + 1) % FRAMES.len();
+                    std::thread::sleep(std::time::Duration::from_millis(80));
+                }
+            })
+        };
+
+        Self {
+            label,
+            running,
+            thread: Some(thread),
+        }
+    }
+
+    /// What is being waited for now. Cheap enough to call per item.
+    pub fn say(&self, what: impl Into<String>) {
+        *self.label.lock().unwrap_or_else(|e| e.into_inner()) = what.into();
+    }
+
+    /// Take the line back before something is printed over it.
+    pub fn clear(&self) {
+        use std::io::Write;
+        if self.thread.is_some() {
+            *self.label.lock().unwrap_or_else(|e| e.into_inner()) = String::new();
+            let mut err = std::io::stderr();
+            let _ = write!(err, "\r\x1b[K");
+            let _ = err.flush();
+        }
+    }
+}
+
+impl Drop for Progress {
+    fn drop(&mut self) {
+        self.running
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+            use std::io::Write;
+            let mut err = std::io::stderr();
+            let _ = write!(err, "\r\x1b[K");
+            let _ = err.flush();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -300,94 +389,5 @@ mod tests {
             }
         }
         out
-    }
-}
-
-/// A line that says what is being waited for.
-///
-/// The Bitwarden client costs over a second a call before it does any work, so
-/// a run that talks to it several times is a run that looks hung. This says
-/// what it is waiting for and keeps moving while it waits.
-///
-/// It draws on stderr, so stdout stays exactly what it was and a piped run is
-/// unchanged. When nobody is watching — not a terminal, `NO_COLOR`, `--color
-/// never` — it does nothing at all rather than filling a log with frames.
-pub struct Progress {
-    label: std::sync::Arc<std::sync::Mutex<String>>,
-    running: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    thread: Option<std::thread::JoinHandle<()>>,
-}
-
-const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-
-impl Progress {
-    pub fn new(colour: Colour) -> Self {
-        let label = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
-        let running = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
-
-        let silent = colour == Colour::Never || !std::io::stderr().is_terminal();
-        if silent {
-            running.store(false, std::sync::atomic::Ordering::Relaxed);
-            return Self {
-                label,
-                running,
-                thread: None,
-            };
-        }
-
-        let thread = {
-            let label = std::sync::Arc::clone(&label);
-            let running = std::sync::Arc::clone(&running);
-            std::thread::spawn(move || {
-                use std::io::Write;
-                let mut frame = 0usize;
-                while running.load(std::sync::atomic::Ordering::Relaxed) {
-                    let text = label.lock().unwrap_or_else(|e| e.into_inner()).clone();
-                    if !text.is_empty() {
-                        let mut err = std::io::stderr();
-                        let _ = write!(err, "\r\x1b[2m{}\x1b[0m {text}\x1b[K", FRAMES[frame]);
-                        let _ = err.flush();
-                    }
-                    frame = (frame + 1) % FRAMES.len();
-                    std::thread::sleep(std::time::Duration::from_millis(80));
-                }
-            })
-        };
-
-        Self {
-            label,
-            running,
-            thread: Some(thread),
-        }
-    }
-
-    /// What is being waited for now. Cheap enough to call per item.
-    pub fn say(&self, what: impl Into<String>) {
-        *self.label.lock().unwrap_or_else(|e| e.into_inner()) = what.into();
-    }
-
-    /// Take the line back before something is printed over it.
-    pub fn clear(&self) {
-        use std::io::Write;
-        if self.thread.is_some() {
-            *self.label.lock().unwrap_or_else(|e| e.into_inner()) = String::new();
-            let mut err = std::io::stderr();
-            let _ = write!(err, "\r\x1b[K");
-            let _ = err.flush();
-        }
-    }
-}
-
-impl Drop for Progress {
-    fn drop(&mut self) {
-        self.running
-            .store(false, std::sync::atomic::Ordering::Relaxed);
-        if let Some(t) = self.thread.take() {
-            let _ = t.join();
-            use std::io::Write;
-            let mut err = std::io::stderr();
-            let _ = write!(err, "\r\x1b[K");
-            let _ = err.flush();
-        }
     }
 }
