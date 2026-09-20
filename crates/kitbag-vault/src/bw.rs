@@ -12,8 +12,10 @@
 //! whoever opens the vault in a browser, and are never read back from there.
 
 use std::process::{Command, Stdio};
+use std::sync::Mutex;
 
 use anyhow::{anyhow, bail, Context, Result};
+use base64::Engine as _;
 use kitbag_core::Envelope;
 
 use crate::{Backend, Capabilities, Listing};
@@ -47,6 +49,12 @@ fn stored_elsewhere(notes: &str) -> bool {
 
 pub struct Bw {
     session: Option<String>,
+    /// `bw list items` decrypts the whole vault, and it returns every item in
+    /// full — notes included. Asking once and keeping the answer is the
+    /// difference between one decryption per run and one per item: restoring
+    /// thirty-nine items used to cost thirty-nine of them.
+    items: Mutex<Option<Vec<serde_json::Value>>>,
+    folder: Mutex<Option<String>>,
 }
 
 impl Bw {
@@ -62,6 +70,8 @@ impl Bw {
         match parsed.get("status").and_then(|s| s.as_str()) {
             Some("unlocked") => Ok(Self {
                 session: std::env::var("BW_SESSION").ok(),
+                items: Mutex::new(None),
+                folder: Mutex::new(None),
             }),
             Some("locked") => bail!("the vault is locked — run `bw unlock` and export BW_SESSION"),
             Some("unauthenticated") => bail!("not logged in — run `bw login` first"),
@@ -73,13 +83,52 @@ impl Bw {
         run(args, self.session.as_deref(), stdin)
     }
 
-    fn items(&self) -> Result<Vec<serde_json::Value>> {
-        let out = self.call(&["list", "items"], None)?;
-        let all: Vec<serde_json::Value> = serde_json::from_str(&out)?;
-        Ok(all
-            .into_iter()
-            .filter(|i| field(i, "kitbag").is_some())
-            .collect())
+    /// The vault's kitbag items, fetched at most once. Borrowed rather than
+    /// cloned: the callers want one item out of it, not a copy of all of them.
+    fn with_items<T>(&self, f: impl FnOnce(&[serde_json::Value]) -> T) -> Result<T> {
+        let mut held = self.items.lock().unwrap_or_else(|e| e.into_inner());
+        if held.is_none() {
+            let out = self.call(&["list", "items"], None)?;
+            let all: Vec<serde_json::Value> = serde_json::from_str(&out)?;
+            *held = Some(
+                all.into_iter()
+                    .filter(|i| field(i, "kitbag").is_some())
+                    .collect(),
+            );
+        }
+        Ok(f(held.as_deref().unwrap_or_default()))
+    }
+
+    fn item_named(&self, name: &str) -> Result<Option<serde_json::Value>> {
+        self.with_items(|all| {
+            all.iter()
+                .find(|i| i.get("name").and_then(|n| n.as_str()) == Some(name))
+                .cloned()
+        })
+    }
+
+    /// Re-read one item, for a write whose result this does not fully know.
+    /// One item, not the vault: `bw get item` decrypts what was asked for.
+    fn refresh(&self, id: &str) -> Result<()> {
+        let out = self.call(&["get", "item", id], None)?;
+        self.remember(serde_json::from_str(&out)?);
+        Ok(())
+    }
+
+    /// Keep the cache true after a write, rather than dropping it: a push
+    /// writes item after item, and a cache thrown away each time is no cache.
+    fn remember(&self, item: serde_json::Value) {
+        let name = item.get("name").and_then(|n| n.as_str()).unwrap_or("");
+        let mut held = self.items.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(all) = held.as_mut() {
+            match all
+                .iter()
+                .position(|i| i.get("name").and_then(|n| n.as_str()) == Some(name))
+            {
+                Some(at) => all[at] = item,
+                None => all.push(item),
+            }
+        }
     }
 
     fn folder_id(&self) -> Result<Option<String>> {
@@ -93,18 +142,28 @@ impl Bw {
     }
 
     fn ensure_folder(&self) -> Result<String> {
+        if let Some(id) = self
+            .folder
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+        {
+            return Ok(id);
+        }
         if let Some(id) = self.folder_id()? {
+            *self.folder.lock().unwrap_or_else(|e| e.into_inner()) = Some(id.clone());
             return Ok(id);
         }
         let body = serde_json::json!({ "name": FOLDER }).to_string();
-        let encoded = self.call(&["encode"], Some(body.as_bytes()))?;
-        let created = self.call(&["create", "folder", encoded.trim()], None)?;
+        let created = self.call(&["create", "folder", &encode(body.as_bytes())], None)?;
         let value: serde_json::Value = serde_json::from_str(&created)?;
-        value
+        let id = value
             .get("id")
             .and_then(|i| i.as_str())
             .map(str::to_string)
-            .ok_or_else(|| anyhow!("bw created a folder without an id"))
+            .ok_or_else(|| anyhow!("bw created a folder without an id"))?;
+        *self.folder.lock().unwrap_or_else(|e| e.into_inner()) = Some(id.clone());
+        Ok(id)
     }
 }
 
@@ -120,24 +179,22 @@ impl Backend for Bw {
     }
 
     fn list(&self) -> Result<Vec<Listing>> {
-        Ok(self
-            .items()?
-            .iter()
-            .filter_map(|item| {
-                let name = item.get("name")?.as_str()?.to_string();
-                Some(Listing {
-                    name,
-                    payload_hash: field(item, "hash"),
+        self.with_items(|all| {
+            all.iter()
+                .filter_map(|item| {
+                    let name = item.get("name")?.as_str()?.to_string();
+                    Some(Listing {
+                        name,
+                        payload_hash: field(item, "hash"),
+                    })
                 })
-            })
-            .collect())
+                .collect()
+        })
     }
 
     fn get(&self, name: &str) -> Result<Envelope> {
         let item = self
-            .items()?
-            .into_iter()
-            .find(|i| i.get("name").and_then(|n| n.as_str()) == Some(name))
+            .item_named(name)?
             .ok_or_else(|| anyhow!("no such item in the vault: {name}"))?;
 
         let notes = item
@@ -182,10 +239,7 @@ impl Backend for Bw {
 
     fn put(&self, name: &str, envelope: &Envelope) -> Result<()> {
         let folder = self.ensure_folder()?;
-        let existing = self
-            .items()?
-            .into_iter()
-            .find(|i| i.get("name").and_then(|n| n.as_str()) == Some(name));
+        let existing = self.item_named(name)?;
 
         // Read the limit off the declared capability rather than the constant,
         // so the two cannot drift into disagreeing about what this store does.
@@ -193,17 +247,20 @@ impl Backend for Bw {
         let inline = text.len() <= self.capabilities().max_note_bytes.unwrap_or(usize::MAX);
         let body = item_body(name, envelope, &folder, inline);
 
-        let encoded = self.call(&["encode"], Some(body.to_string().as_bytes()))?;
+        // `bw encode` is base64 and nothing else — verified against it — and
+        // every call to the client is a node process. Thirty-nine items is
+        // thirty-nine of them, spent on an encoding this can do itself.
+        let encoded = encode(body.to_string().as_bytes());
         let id = match existing
             .as_ref()
             .and_then(|i| i.get("id").and_then(|v| v.as_str()))
         {
             Some(id) => {
-                self.call(&["edit", "item", id, encoded.trim()], None)?;
+                self.call(&["edit", "item", id, &encoded], None)?;
                 id.to_string()
             }
             None => {
-                let created = self.call(&["create", "item", encoded.trim()], None)?;
+                let created = self.call(&["create", "item", &encoded], None)?;
                 let value: serde_json::Value = serde_json::from_str(&created)?;
                 value
                     .get("id")
@@ -214,6 +271,16 @@ impl Backend for Bw {
         };
 
         if inline {
+            // What the cache should now say about this item: what was sent,
+            // under the id it was sent to, keeping whatever attachments it
+            // already had.
+            let mut written = body;
+            written["id"] = serde_json::Value::String(id);
+            written["attachments"] = existing
+                .as_ref()
+                .and_then(|i| i.get("attachments").cloned())
+                .unwrap_or(serde_json::Value::Array(Vec::new()));
+            self.remember(written);
             return Ok(());
         }
 
@@ -251,6 +318,11 @@ impl Backend for Bw {
         for old in replaced {
             self.call(&["delete", "attachment", &old, "--itemid", &id], None)?;
         }
+
+        // The new attachment's id is bw's to assign, and caching a guess at it
+        // would have this tool delete the wrong one next time. Ask for the one
+        // item rather than the vault.
+        self.refresh(&id)?;
         Ok(())
     }
 }
@@ -289,6 +361,11 @@ fn attachment_ids(item: &serde_json::Value) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// What `bw encode` does, without the process.
+fn encode(bytes: &[u8]) -> String {
+    base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
 fn field(item: &serde_json::Value, name: &str) -> Option<String> {

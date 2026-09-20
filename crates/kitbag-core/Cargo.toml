@@ -8,7 +8,7 @@ repository.workspace = true
 description = "Model and engine for kitbag"
 
 [dependencies]
-base64 = "0.22"
+base64.workspace = true
 glob = "0.3"
 toml = "0.9"
 serde.workspace = true

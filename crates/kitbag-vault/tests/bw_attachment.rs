@@ -11,7 +11,8 @@ use kitbag_vault::bw::Bw;
 use kitbag_vault::Backend;
 
 /// Point the backend at the stub, in a state directory of this test's own.
-fn with_fake_bw<T>(f: impl FnOnce() -> T) -> T {
+/// The closure is handed that directory, where the stub records every call.
+fn with_fake_bw<T>(f: impl FnOnce(&std::path::Path) -> T) -> T {
     // Serialised: the client and its state are process-wide.
     static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -21,10 +22,19 @@ fn with_fake_bw<T>(f: impl FnOnce() -> T) -> T {
 
     std::env::set_var("KITBAG_BW", stub);
     std::env::set_var("KITBAG_FAKE_STATE", dir.path());
-    let out = f();
+    let out = f(dir.path());
     std::env::remove_var("KITBAG_BW");
     std::env::remove_var("KITBAG_FAKE_STATE");
     out
+}
+
+/// How many times the stub was asked for a given call.
+fn calls(state: &std::path::Path, what: &str) -> usize {
+    std::fs::read_to_string(state.join("calls.log"))
+        .unwrap_or_default()
+        .lines()
+        .filter(|line| line.trim() == what)
+        .count()
 }
 
 fn big_envelope(len: usize) -> Envelope {
@@ -33,7 +43,7 @@ fn big_envelope(len: usize) -> Envelope {
 
 #[test]
 fn a_payload_too_big_for_a_note_survives_the_round_trip() {
-    with_fake_bw(|| {
+    with_fake_bw(|_state| {
         let store = Bw::new().expect("the stub reports an unlocked vault");
         let sent = big_envelope(40_000);
 
@@ -48,7 +58,7 @@ fn a_payload_too_big_for_a_note_survives_the_round_trip() {
 
 #[test]
 fn a_small_payload_still_goes_in_the_note() {
-    with_fake_bw(|| {
+    with_fake_bw(|_state| {
         let store = Bw::new().expect("unlocked");
         let sent = Envelope::new(Scope::Personal, b"small enough".to_vec());
         store.put("env:small", &sent).expect("put");
@@ -58,7 +68,7 @@ fn a_small_payload_still_goes_in_the_note() {
 
 #[test]
 fn the_hash_is_listed_without_the_payload_being_fetched() {
-    with_fake_bw(|| {
+    with_fake_bw(|_state| {
         let store = Bw::new().expect("unlocked");
         let sent = big_envelope(40_000);
         store.put("app:big", &sent).expect("put");
@@ -76,7 +86,7 @@ fn the_hash_is_listed_without_the_payload_being_fetched() {
 
 #[test]
 fn replacing_a_payload_leaves_one_attachment_not_two() {
-    with_fake_bw(|| {
+    with_fake_bw(|_state| {
         let store = Bw::new().expect("unlocked");
         store.put("app:big", &big_envelope(40_000)).expect("first");
 
@@ -92,5 +102,55 @@ fn replacing_a_payload_leaves_one_attachment_not_two() {
             store.list().expect("list")[0].payload_hash.as_deref(),
             Some(second.sha256().as_str())
         );
+    });
+}
+
+#[test]
+fn the_whole_vault_is_listed_once_however_many_items_are_read() {
+    // `bw list items` decrypts every item the vault holds. Reading thirty-nine
+    // items used to ask for that thirty-nine times, which is what made a
+    // restore slow enough to notice.
+    with_fake_bw(|state| {
+        let store = Bw::new().expect("unlocked");
+        for n in 0..12 {
+            let env = Envelope::new(Scope::Personal, format!("item {n}").into_bytes());
+            store.put(&format!("env:{n}"), &env).expect("put");
+        }
+        for n in 0..12 {
+            store.get(&format!("env:{n}")).expect("get");
+        }
+
+        assert_eq!(
+            calls(state, "list items"),
+            1,
+            "24 operations, one decryption of the vault"
+        );
+        assert_eq!(
+            calls(state, "list folders"),
+            1,
+            "and the folder is looked up once, not once per item"
+        );
+        assert_eq!(
+            calls(state, "encode "),
+            0,
+            "encoding is base64, and does not need a process to do it"
+        );
+    });
+}
+
+#[test]
+fn what_was_written_is_readable_without_asking_the_vault_again() {
+    // The cache has to stay true across a write, or a push would hand back
+    // whatever the vault held before it started.
+    with_fake_bw(|state| {
+        let store = Bw::new().expect("unlocked");
+        let first = Envelope::new(Scope::Personal, b"before".to_vec());
+        store.put("env:a", &first).expect("put");
+
+        let second = Envelope::new(Scope::Personal, b"after".to_vec());
+        store.put("env:a", &second).expect("put again");
+
+        assert_eq!(store.get("env:a").expect("get").payload, second.payload);
+        assert_eq!(calls(state, "list items"), 1);
     });
 }
