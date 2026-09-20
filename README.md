@@ -42,8 +42,8 @@ $ kitbag status
   + 3 new   ~ 1 changed   = 32 unchanged   ? 1 to build
 ```
 
-> **Status: design.** The model, the command surface and the guardrails exist
-> and are tested. The engine behind them is not built yet — see
+> **Status: early.** `status` and `plan` read a real machine and answer for
+> real; `apply`, `push`, `restore` and `discover` are still stubs. See
 > [DESIGN.md](DESIGN.md) for the argument and the plan.
 
 ## The question nothing answers

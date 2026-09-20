@@ -16,4 +16,5 @@ anyhow.workspace = true
 clap = { version = "4", features = ["derive", "env", "wrap_help"] }
 clap_complete = "4"
 kitbag-core = { path = "../kitbag-core" }
+kitbag-providers = { path = "../kitbag-providers" }
 kitbag-vault = { path = "../kitbag-vault" }

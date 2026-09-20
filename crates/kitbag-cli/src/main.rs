@@ -4,15 +4,16 @@
 //! be argued with before it is implemented. Every command that would change
 //! something says what it would do and stops unless told otherwise.
 
+mod run;
 mod ui;
 
 use anyhow::Result;
 use clap::builder::styling::{AnsiColor, Effects, Styles};
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
-use kitbag_core::{Scope, Wanted};
+use kitbag_core::Wanted;
 
-use ui::{Colour, Group, Mark, Row};
+use ui::Colour;
 
 fn styles() -> Styles {
     Styles::styled()
@@ -141,9 +142,11 @@ fn main() -> Result<()> {
         ColourChoice::Auto => Colour::resolve(None),
     };
 
+    // Only an explicit --scope overrides the machine's own configuration;
+    // otherwise the machine file decides what this machine is willing to hold.
     let wanted = match cli.scope.as_deref() {
-        Some(s) => Wanted::parse(s)?,
-        None => Wanted::default(),
+        Some(s) => Some(Wanted::parse(s)?),
+        None => None,
     };
 
     if let Command::Completions { shell } = cli.command {
@@ -153,80 +156,39 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    // Until the engine exists, every command shows the shape of its answer
-    // rather than pretending to have one. The names are invented; the layout,
-    // the grouping and the marks are the real thing.
-    let row = |mark: Mark, name: &str, detail: &str| Row {
-        mark: Some(mark),
-        name: name.into(),
-        detail: detail.into(),
-    };
-    let sample = vec![
-        Group {
-            scope: Scope::Personal,
-            owner: None,
-            rows: vec![
-                row(
-                    Mark::Unchanged,
-                    "env:notes",
-                    "NOTES_URL NOTES_DB NOTES_USER NOTES_PASSWORD",
-                ),
-                row(
-                    Mark::Unchanged,
-                    "ssh:id_ed25519",
-                    "SHA256:XhCQXT9l7zas… (ED25519)",
-                ),
-                row(
-                    Mark::New,
-                    "ssh:authorized_keys",
-                    "5 keys: laptop desktop mini server phone",
-                ),
-            ],
-        },
-        Group {
-            scope: Scope::Shared,
-            owner: Some("a friend".into()),
-            rows: vec![row(
-                Mark::Unchanged,
-                "env:llm-proxy",
-                "PROXY_URL PROXY_TOKEN MODEL",
-            )],
-        },
-        Group {
-            scope: Scope::Work,
-            owner: Some("acme".into()),
-            rows: vec![
-                row(
-                    Mark::Changed,
-                    "env:ci",
-                    "CI_TOKEN CI_URL DEPLOY_KEY_ID REGISTRY_USER REGISTRY_PASSWORD +5 more",
-                ),
-                row(
-                    Mark::New,
-                    "file:cloud-keychain",
-                    "binary, 25788 bytes → ~/Library/Keychains/…",
-                ),
-            ],
-        },
-        Group {
-            scope: Scope::Mixed {
-                spans: vec!["personal".into(), "work".into()],
-            },
-            owner: None,
-            rows: vec![row(
-                Mark::Unknown,
-                "app:accounts",
-                "one bundle — personal, work",
-            )],
-        },
-    ];
-
     let width = terminal_width();
-    print!("{}", ui::render(&sample, colour, width));
-    println!();
-    println!("  kitbag is not implemented yet — this is the shape of the answer.");
-    println!("  scopes this run would take: {wanted:?}");
+
+    match cli.command {
+        Command::Status => run::status(cli.backend.as_deref(), wanted, colour, width)?,
+        Command::Plan => run::plan(&repo_root(), colour, width)?,
+        other => {
+            println!("  kitbag {} is not implemented yet.", name_of(&other));
+            println!("  Implemented so far: status, plan, completions.");
+        }
+    }
     Ok(())
+}
+
+/// Where the recipes live: the repository this was run from, or one named.
+fn repo_root() -> std::path::PathBuf {
+    std::env::var_os("KITBAG_REPO")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
+}
+
+fn name_of(c: &Command) -> &'static str {
+    match c {
+        Command::Status => "status",
+        Command::Plan => "plan",
+        Command::Apply { .. } => "apply",
+        Command::Discover => "discover",
+        Command::Track { .. } => "track",
+        Command::Push { .. } => "push",
+        Command::Restore { .. } => "restore",
+        Command::Doctor => "doctor",
+        Command::Lint { .. } => "lint",
+        Command::Completions { .. } => "completions",
+    }
 }
 
 fn terminal_width() -> usize {

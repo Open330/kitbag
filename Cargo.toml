@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/kitbag-core", "crates/kitbag-vault", "crates/kitbag-cli"]
+members = ["crates/kitbag-core", "crates/kitbag-providers", "crates/kitbag-vault", "crates/kitbag-cli"]
 resolver = "2"
 
 [workspace.package]
