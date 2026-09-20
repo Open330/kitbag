@@ -180,7 +180,7 @@ scope = "auto""#,
 
     #[test]
     fn names_come_from_where_a_file_lives() {
-        let home = Path::new("/home/x");
+        let home = Path::new("/home/user");
         assert_eq!(
             derive_name(&home.join(".envs/github.env"), home),
             "env:github"
@@ -202,8 +202,8 @@ scope = "auto""#,
 
     #[test]
     fn tilde_is_this_home_and_nothing_else() {
-        let home = Path::new("/home/x");
-        assert_eq!(expand("~/.envs/a.env", home), "/home/x/.envs/a.env");
+        let home = Path::new("/home/user");
+        assert_eq!(expand("~/.envs/a.env", home), "/home/user/.envs/a.env");
         assert_eq!(expand("/etc/hosts", home), "/etc/hosts");
     }
 }

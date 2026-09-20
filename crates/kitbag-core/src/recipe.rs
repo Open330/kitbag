@@ -177,8 +177,8 @@ mod tests {
     #[test]
     fn a_link_source_is_relative_to_the_repo_and_a_target_to_the_home() {
         let r: Recipes = toml::from_str(SAMPLE).unwrap();
-        let (from, to) = r.recipes[0].link[0].expanded(Path::new("/home/x"), Path::new("/repo"));
+        let (from, to) = r.recipes[0].link[0].expanded(Path::new("/home/user"), Path::new("/repo"));
         assert_eq!(from, Path::new("/repo/configs/.zshrc"));
-        assert_eq!(to, Path::new("/home/x/.zshrc"));
+        assert_eq!(to, Path::new("/home/user/.zshrc"));
     }
 }
