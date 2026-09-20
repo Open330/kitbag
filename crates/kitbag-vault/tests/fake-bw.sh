@@ -16,6 +16,7 @@ state() { python3 "$(dirname "${BASH_SOURCE[0]}")/fake-bw.py" "$S" "$@"; }
 
 case "$1 ${2:-}" in
     "status ")      printf '{"status":"unlocked"}' ;;
+    "sync ")        ;;   # the real one pulls the vault; here there is nowhere to pull from
     "encode ")      base64 | tr -d '\n' ;;
     "list folders") cat "$S/folders.json" 2>/dev/null || echo '[]' ;;
     "list items")   state list ;;

@@ -109,6 +109,16 @@ impl Bw {
     fn with_items<T>(&self, f: impl FnOnce(&[serde_json::Value]) -> T) -> Result<T> {
         let mut held = self.items.lock().unwrap_or_else(|e| e.into_inner());
         if held.is_none() {
+            // `bw list items` reads the client's own copy of the vault and does
+            // not go to the server for it. Without a sync this compares a
+            // machine against whatever that copy last happened to hold — which
+            // makes an item look unchanged when the store does not have it in
+            // that form, and a backup that skips an item because of a stale
+            // cache is the failure this whole thing exists to avoid.
+            //
+            // It costs about five seconds, once per run, and it is the reason
+            // the shell engine has always opened with "Syncing vault".
+            self.call(&["sync"], None)?;
             let out = self.call(&["list", "items"], None)?;
             // A session that expired mid-run leaves the client exiting happily
             // with nothing on stdout. Reporting that as a JSON parse error at

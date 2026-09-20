@@ -98,7 +98,7 @@ fn calls(state: &Path) -> Vec<String> {
 }
 
 #[test]
-fn updating_one_attachment_item_costs_four_calls() {
+fn updating_one_attachment_item_costs_five_calls() {
     // Every call to the Bitwarden client is a node process costing over a
     // second on the machine this was measured on, so the count is the runtime.
     // It was six: a folder listing that the item listing already answered, and
@@ -123,11 +123,12 @@ fn updating_one_attachment_item_costs_four_calls() {
     assert_eq!(
         made,
         vec![
+            "sync",
             "list items",
             "edit item",
             "create attachment",
             "delete attachment",
         ],
-        "one listing, and three writes that each have to happen"
+        "one sync, one listing, and three writes that each have to happen"
     );
 }
