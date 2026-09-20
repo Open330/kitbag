@@ -2,47 +2,49 @@
 #
 #   cargo build --release && vhs docs/demo.tape   →   docs/demo.gif
 #
-# What the viewer sees is the real binary: the real grouping, the real markers,
-# the real wrapping. What it reports is a sample, because the engine behind the
-# commands is not built yet — the last line of the run says so, on purpose. A
-# demo that implied otherwise would be the first thing a reader found untrue.
+# The real binary against a made-up home, built by docs/demo-setup.sh - nothing
+# here is anybody's actual machine, which is the rule this repository follows
+# everywhere else.
 #
 # Arc:
-#   0–4s    the question   — `kitbag status`, and what the answer looks like
-#   4–9s    the shape      — grouped by whose it is, marked with what would change
-#   9–14s   the surface    — the commands, from --help
+#   0–6s    discover  — what is here that nothing is tracking
+#   6–14s   status    — grouped by whose it is, marked against the store
+#   14–20s  push      — and then a second push, which costs nothing
 
 Output docs/demo.gif
-
-# ffmpeg turns the frames into the GIF, and VHS reports its absence in a way
-# that reads like a font problem. Fail on the tape instead.
 Require ffmpeg
 
 Set Shell zsh
 Set FontSize 16
-Set Width 1000
-Set Height 700
+Set Width 1240
+Set Height 740
 Set Padding 24
 Set Theme "Catppuccin Mocha"
-Set TypingSpeed 55ms
-Set PlaybackSpeed 1
+Set TypingSpeed 45ms
 
 Hide
-Type "export PATH=$PWD/target/release:$PATH COLUMNS=94 CLICOLOR_FORCE=1"  Enter
-Type "clear"  Enter
+Type "export PATH=$PWD/target/release:$PATH COLUMNS=96 CLICOLOR_FORCE=1" Enter
+Type "export HOME=$(sh docs/demo-setup.sh)" Enter
+Type "export KITBAG_CONFIG=$HOME/.config/kitbag/machine.toml" Enter
+Type "clear" Enter
 Show
 
-Sleep 700ms
-Type "kitbag status"  Sleep 400ms  Enter
-Sleep 5s
-
-Type "kitbag --help"  Sleep 400ms  Enter
+Sleep 600ms
+Type "kitbag discover" Sleep 300ms Enter
 Sleep 5s
 
 Hide
-Type "clear"  Enter
+Type "kitbag discover --write >/dev/null" Enter
+Type "clear" Enter
 Show
-Sleep 300ms
 
-# Re-record after changing the sample report or the renderer:
-#   cargo build --release && vhs docs/demo.tape
+Type "kitbag status --backend age" Sleep 300ms Enter
+Sleep 6s
+
+Hide
+Type "clear" Enter
+Show
+Type "kitbag push --backend age" Sleep 300ms Enter
+Sleep 3s
+Type "kitbag push --backend age" Sleep 300ms Enter
+Sleep 3s

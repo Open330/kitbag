@@ -1,0 +1,27 @@
+# kitbag's own recipes — public on purpose.
+#
+# What is in here is patterns and package names. What is *not* in here is the
+# list of what exists on any particular machine: that lives in the machine's
+# own file and in the store, because a public repository that names one
+# person's employer, stack and paths has told the world where to aim.
+#
+#   kitbag plan     what would change
+#   kitbag apply    make it so
+
+[[recipe]]
+name = "rust"
+[[recipe.command]]
+run = "curl -LsSf https://sh.rustup.rs | sh -s -- -y --no-modify-path"
+check = "rustup --version"
+
+[[recipe]]
+name = "shell"
+pkg = ["fzf", "ripgrep"]
+
+[[recipe]]
+name = "macos"
+platform = "macos"
+defaults = [
+  # Show what a file is, not what an icon suggests.
+  { domain = "NSGlobalDomain", key = "AppleShowAllExtensions", type = "bool", value = true },
+]
