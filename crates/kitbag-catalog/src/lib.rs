@@ -330,7 +330,10 @@ mod tests {
     /// Assembled rather than written down: a literal would be a finding in
     /// this repository's own lint run.
     fn secretish() -> String {
-        format!("TOKEN={}{}\n", "ghp_", "aB3xQ9zK7mP2wR5tY8uI1oL4cV6nE0jH")
+        format!(
+            "TOKEN={}{}{}\n",
+            "ghp_", "aB3xQ9zK7mP2wR5t", "Y8uI1oL4cV6nE0jH"
+        )
     }
 
     #[test]
