@@ -391,7 +391,8 @@ pub fn push(backend: Option<&str>, wanted: Option<Wanted>, dry_run: bool) -> Res
                     println!("  {} {:<28} would be sent", state.glyph(), item.name);
                 } else {
                     let envelope = Envelope::new(item.scope.clone(), item.payload.clone())
-                        .with_owner(item.owner.clone());
+                        .with_owner(item.owner.clone())
+                        .with_path(Some(pretty(&item.path, &home)));
                     store
                         .put(&item.name, &envelope)
                         .with_context(|| format!("sending {}", item.name))?;
@@ -445,12 +446,20 @@ pub fn restore(backend: Option<&str>, wanted: Option<Wanted>, dry_run: bool) -> 
         if !wanted.accepts(&envelope.scope) {
             continue;
         }
-        let Some(dest) = known.get(listing.name.as_str()) else {
-            // The store knows an item this machine has never tracked, so there
-            // is nowhere to put it without guessing at a path.
-            unplaceable.push(listing.name.clone());
-            continue;
+        // Where it belongs: what the envelope says, else where this machine
+        // already keeps it. The first is what makes a restore work on a
+        // machine where the file does not exist yet, which is most of them.
+        let dest = match envelope.destination(&home) {
+            Some(path) => path,
+            None => match known.get(listing.name.as_str()) {
+                Some(path) => path.to_path_buf(),
+                None => {
+                    unplaceable.push(listing.name.clone());
+                    continue;
+                }
+            },
         };
+        let dest = &dest;
 
         if std::fs::read(dest)
             .map(|b| b == envelope.payload)

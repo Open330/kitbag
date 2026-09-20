@@ -37,6 +37,10 @@ const MAGIC: &str = "kitbag/1";
 pub struct Envelope {
     pub scope: Scope,
     pub owner: Option<String>,
+    /// Where this belongs, written `~/…`. A restore onto a machine where the
+    /// file does not exist yet - the whole point of a restore - has no other
+    /// way to know, since there is nothing on disk to learn it from.
+    pub path: Option<String>,
     pub payload: Vec<u8>,
     /// Headers kitbag did not recognise, kept so a newer writer does not lose
     /// information when an older reader rewrites the item.
@@ -64,6 +68,7 @@ impl Envelope {
         Self {
             scope,
             owner: None,
+            path: None,
             payload,
             extra: BTreeMap::new(),
         }
@@ -72,6 +77,26 @@ impl Envelope {
     pub fn with_owner(mut self, owner: Option<String>) -> Self {
         self.owner = owner;
         self
+    }
+
+    pub fn with_path(mut self, path: Option<String>) -> Self {
+        self.path = path;
+        self
+    }
+
+    /// Where this may be written, given a home directory.
+    ///
+    /// A store decides where a restore puts things, so a store that has been
+    /// tampered with must not be able to name `../../etc/anything`. Only paths
+    /// under the home directory are allowed, and `..` is refused outright.
+    pub fn destination(&self, home: &std::path::Path) -> Option<std::path::PathBuf> {
+        let raw = self.path.as_deref()?;
+        if raw.contains("..") {
+            return None;
+        }
+        let rest = raw.strip_prefix("~/")?;
+        let full = home.join(rest);
+        full.starts_with(home).then_some(full)
     }
 
     pub fn sha256(&self) -> String {
@@ -101,6 +126,9 @@ impl Envelope {
         if let Some(owner) = &self.owner {
             out.push_str(&format!("owner: {owner}\n"));
         }
+        if let Some(path) = &self.path {
+            out.push_str(&format!("path: {path}\n"));
+        }
         out.push_str(&format!("encoding: {encoding}\n"));
         out.push_str(&format!("sha256: {}\n", self.sha256()));
         for (k, v) in &self.extra {
@@ -122,6 +150,7 @@ impl Envelope {
         let mut scope: Option<Scope> = None;
         let mut spans: Vec<String> = Vec::new();
         let mut owner = None;
+        let mut path = None;
         let mut encoding = "utf8".to_string();
         let mut sha = None;
         let mut extra = BTreeMap::new();
@@ -141,6 +170,7 @@ impl Envelope {
                         .collect()
                 }
                 "owner" => owner = Some(v),
+                "path" => path = Some(v),
                 "encoding" => encoding = v,
                 "sha256" => sha = Some(v),
                 _ => {
@@ -164,6 +194,7 @@ impl Envelope {
         let envelope = Envelope {
             scope,
             owner,
+            path,
             payload,
             extra,
         };
@@ -221,6 +252,27 @@ mod tests {
             back.extra.get("rotated-at").map(String::as_str),
             Some("2026-09-20")
         );
+    }
+
+    #[test]
+    fn an_envelope_carries_where_it_belongs() {
+        let e =
+            Envelope::new(Scope::Personal, b"x".to_vec()).with_path(Some("~/.envs/a.env".into()));
+        let back = Envelope::parse(&e.to_text()).unwrap();
+        assert_eq!(back.path.as_deref(), Some("~/.envs/a.env"));
+        assert_eq!(
+            back.destination(std::path::Path::new("/home/user")),
+            Some(std::path::PathBuf::from("/home/user/.envs/a.env"))
+        );
+    }
+
+    #[test]
+    fn a_store_cannot_name_a_path_outside_the_home() {
+        let home = std::path::Path::new("/home/user");
+        for hostile in ["/etc/passwd", "~/../../etc/passwd", "../elsewhere"] {
+            let e = Envelope::new(Scope::Personal, b"x".to_vec()).with_path(Some(hostile.into()));
+            assert_eq!(e.destination(home), None, "{hostile} should be refused");
+        }
     }
 
     #[test]

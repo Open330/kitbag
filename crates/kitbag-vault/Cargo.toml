@@ -8,6 +8,10 @@ repository.workspace = true
 description = "Secret store backends for kitbag"
 
 [dependencies]
+age = "0.11"
 anyhow.workspace = true
 kitbag-core = { path = "../kitbag-core" }
 serde_json.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

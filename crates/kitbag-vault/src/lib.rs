@@ -18,7 +18,9 @@
 //! | [`BackendKind::Pass`] | `pass` / `gopass` (GPG) | a tree of encrypted files; no metadata of its own, which the envelope makes irrelevant |
 //! | [`BackendKind::Age`] | an `age`-encrypted file | no server at all; can sit beside a public repo |
 
+pub mod agefile;
 pub mod bw;
+pub mod shellout;
 
 use std::collections::BTreeMap;
 use std::str::FromStr;
@@ -104,9 +106,9 @@ impl BackendKind {
         match self {
             BackendKind::Memory => Ok(Box::new(MemoryBackend::default())),
             BackendKind::Bw => Ok(Box::new(bw::Bw::new()?)),
-            BackendKind::Op => bail!("the op backend is not implemented yet"),
-            BackendKind::Pass => bail!("the pass backend is not implemented yet"),
-            BackendKind::Age => bail!("the age backend is not implemented yet"),
+            BackendKind::Op => Ok(Box::new(shellout::Op::new()?)),
+            BackendKind::Pass => Ok(Box::new(shellout::Pass::new()?)),
+            BackendKind::Age => Ok(Box::new(agefile::AgeFile::new()?)),
         }
     }
 }
@@ -249,22 +251,21 @@ mod tests {
     }
 
     #[test]
-    fn a_backend_that_is_not_written_yet_says_so_plainly() {
-        let Err(err) = BackendKind::Op.open() else {
-            panic!("the op backend reported itself as ready");
-        };
-        assert!(err.to_string().contains("not implemented"), "{err}");
-    }
-
-    #[test]
-    fn the_bw_backend_is_wired_up_even_where_no_vault_is_reachable() {
-        // It may fail to open - no CLI, locked, logged out - but it must fail
-        // for one of those reasons rather than because nobody wrote it.
-        if let Err(err) = BackendKind::Bw.open() {
-            assert!(
-                !err.to_string().contains("not implemented"),
-                "the bw backend should be implemented: {err}"
-            );
+    fn every_backend_is_written_even_where_none_is_reachable() {
+        // Each may fail to open here - no client installed, nothing unlocked -
+        // but none may fail because nobody wrote it.
+        for kind in [
+            BackendKind::Bw,
+            BackendKind::Op,
+            BackendKind::Pass,
+            BackendKind::Age,
+        ] {
+            if let Err(err) = kind.open() {
+                assert!(
+                    !err.to_string().contains("not implemented"),
+                    "{kind:?}: {err}"
+                );
+            }
         }
     }
 }
