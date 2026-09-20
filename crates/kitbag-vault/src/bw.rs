@@ -110,7 +110,11 @@ impl Bw {
         let mut held = self.items.lock().unwrap_or_else(|e| e.into_inner());
         if held.is_none() {
             let out = self.call(&["list", "items"], None)?;
-            let all: Vec<serde_json::Value> = serde_json::from_str(&out)?;
+            // A session that expired mid-run leaves the client exiting happily
+            // with nothing on stdout. Reporting that as a JSON parse error at
+            // line 1 column 0 tells nobody anything.
+            let all: Vec<serde_json::Value> = serde_json::from_str(&out)
+                .map_err(|e| self.explain(anyhow!("bw list items said nothing usable: {e}")))?;
             *held = Some(
                 all.into_iter()
                     .filter(|i| field(i, "kitbag").is_some())
