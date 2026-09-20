@@ -238,7 +238,38 @@ crates/
   kitbag-cli       clap, tree/json output, TUI for discover and status
 ```
 
-**Vault access starts as a wrapper around `bw`.** Implementing Bitwarden's
+**Every backend is a first-class citizen, because the envelope does the work.**
+Stores disagree about everything — Bitwarden has notes, fields and attachments;
+1Password has typed fields and files; `pass` has a tree of GPG-encrypted text
+files and no metadata at all. So kitbag stores its own envelope and asks a
+backend only to keep bytes under a name:
+
+```text
+kitbag/1
+scope: work
+owner: acme
+encoding: utf8
+sha256: 1f0e3d…
+
+export TOKEN=…
+```
+
+A store with native fields may mirror the header into them so its own UI shows
+the scope; the envelope stays authoritative. Binary payloads are base64 inside
+the envelope, because "text only" is the common case, not the exception. The
+practical result: **adding a backend is a `list`/`get`/`put` adapter and nothing
+else** — no scope logic, no schema, no migration.
+
+There is deliberately no `delete` in the trait. A store holds things this
+machine knows nothing about, and a tool that removes what it does not recognise
+eventually removes something that mattered.
+
+**Bitwarden and 1Password ship together in v0.1**, since the two cover most
+people; `pass` follows for the GPG crowd and `age` for people with no vault at
+all. The in-memory backend used by tests has *no* capabilities, which makes it
+the floor: anything that works there works everywhere.
+
+Historical note: the first implementation was a wrapper around `bw`. Implementing Bitwarden's
 crypto means writing cipher code against a vault holding everything; the
 performance argument for it mostly evaporated once unchanged items stopped being
 rewritten (a quiet push is now two calls plus the changes). The trait keeps the

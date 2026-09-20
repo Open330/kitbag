@@ -62,12 +62,30 @@ breaks either rule.
 kitbag does not implement one — it borrows yours, so that losing interest in
 kitbag does not strand your secrets inside it.
 
-| backend | why |
-| --- | --- |
-| `bw` | Bitwarden / Vaultwarden: free tier, self-hostable |
-| `age` | no server at all — an encrypted file that can live beside a public repo |
-| `op` | 1Password: the best developer CLI in the category |
-| `pass` | GPG and a git repo, for people who already have it |
+| backend | store | status |
+| --- | --- | --- |
+| `bw` | Bitwarden / Vaultwarden — free tier, self-hostable | v0.1 |
+| `op` | 1Password — the best developer CLI in the category | v0.1 |
+| `pass` | `pass` / `gopass` — GPG and a git repo | v0.2 |
+| `age` | an `age`-encrypted file — no server at all | v0.2 |
+
+Adding one is a `list`/`get`/`put` adapter. Everything kitbag needs to know
+about an item — scope, owner, payload hash — travels inside its own envelope,
+so a store that can keep bytes under a name is enough:
+
+```text
+kitbag/1
+scope: work
+owner: acme
+encoding: utf8
+sha256: 1f0e3d…
+
+export TOKEN=…
+```
+
+There is no `delete` in the backend trait. A store holds things your machine
+knows nothing about; a tool that removes what it does not recognise eventually
+removes something that mattered.
 
 ## Prior art
 

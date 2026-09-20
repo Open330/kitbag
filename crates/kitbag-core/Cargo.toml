@@ -8,5 +8,7 @@ repository.workspace = true
 description = "Model and engine for kitbag"
 
 [dependencies]
+base64 = "0.22"
 serde.workspace = true
+sha2 = "0.10"
 thiserror.workspace = true
