@@ -18,6 +18,39 @@ pub struct Config {
     pub scopes: Vec<String>,
     #[serde(default, rename = "track")]
     pub tracks: Vec<Track>,
+    /// Items this machine will not exchange, by name.
+    ///
+    /// Scope says whose an item is and `platform` says where it can live.
+    /// Neither answers the remaining question, which is not about the item at
+    /// all: a machine that already has its own SSH key must not take the one in
+    /// the store, because two machines on one key means revoking it locks out
+    /// both. That is a fact about the machine, so the machine holds it — and it
+    /// stops the machine sending its own copy over the one in the store, which
+    /// is the same mistake from the other end.
+    #[serde(default)]
+    pub skip: Vec<String>,
+}
+
+impl Config {
+    /// Does this machine refuse to exchange this item?
+    pub fn skips(&self, name: &str) -> bool {
+        self.skip.iter().any(|s| s == name)
+    }
+
+    /// Names from `KITBAG_SKIP`, added to whatever the file said. A refusal is
+    /// often learnt at the moment it matters — on a machine that turns out to
+    /// have its own key — and editing a config file to express it is one step
+    /// too many at that moment.
+    pub fn with_env_skips(mut self) -> Self {
+        if let Ok(list) = std::env::var("KITBAG_SKIP") {
+            for name in list.split(',').map(str::trim).filter(|n| !n.is_empty()) {
+                if !self.skips(name) {
+                    self.skip.push(name.to_string());
+                }
+            }
+        }
+        self
+    }
 }
 
 /// State an application keeps for itself, reachable only through the

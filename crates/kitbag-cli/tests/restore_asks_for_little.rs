@@ -205,3 +205,64 @@ command = { export = "echo carried", restore = "cat > \"$HOME/came-back.txt\"" }
         "the application's state went back through the application:\n{out}"
     );
 }
+
+#[test]
+fn a_machine_keeps_what_it_says_it_keeps_in_both_directions() {
+    // Scope says whose an item is and platform says where it can live. Neither
+    // answers this one: a machine with its own SSH key must not take the one in
+    // the store, and must not push its own over it either — two machines on one
+    // key means revoking it locks out both.
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    let (home, state) = (home.path(), state.path());
+
+    std::fs::create_dir_all(home.join(".envs")).unwrap();
+    std::fs::write(home.join(".envs/shared.env"), "# scope: personal\nA=1\n").unwrap();
+    std::fs::write(home.join(".envs/mine.env"), "# scope: personal\nB=2\n").unwrap();
+    std::fs::write(
+        home.join("machine.toml"),
+        "scopes = [\"personal\"]\nskip = [\"env:mine\"]\n\n[[track]]\npath = \"~/.envs/*.env\"\n",
+    )
+    .unwrap();
+
+    let out = kitbag(home, state, &["push", "--backend", "bw"]);
+    assert!(out.contains("1 sent"), "only the one not kept back:\n{out}");
+    assert!(out.contains("kept on this machine: env:mine"), "{out}");
+
+    // Now take both away and restore: the store never had `env:mine`, and even
+    // if it did this machine would not take it.
+    std::fs::remove_file(home.join(".envs/shared.env")).unwrap();
+    let back = kitbag(home, state, &["restore", "--backend", "bw"]);
+    assert!(home.join(".envs/shared.env").exists(), "{back}");
+}
+
+#[test]
+fn the_environment_can_refuse_an_item_the_config_does_not() {
+    // The moment a refusal is needed is the moment a machine turns out to have
+    // its own key, which is not a good moment to be editing a config file.
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    let (home, state) = (home.path(), state.path());
+
+    std::fs::create_dir_all(home.join(".envs")).unwrap();
+    std::fs::write(home.join(".envs/one.env"), "# scope: personal\nA=1\n").unwrap();
+    std::fs::write(
+        home.join("machine.toml"),
+        "scopes = [\"personal\"]\n\n[[track]]\npath = \"~/.envs/*.env\"\n",
+    )
+    .unwrap();
+
+    let out = Command::new(env!("CARGO_BIN_EXE_kitbag"))
+        .args(["push", "--backend", "bw"])
+        .env("HOME", home)
+        .env("KITBAG_CONFIG", home.join("machine.toml"))
+        .env("KITBAG_BW", stub())
+        .env("KITBAG_FAKE_STATE", state)
+        .env("KITBAG_SKIP", "env:one")
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("kitbag runs");
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("kept on this machine: env:one"), "{text}");
+    assert!(text.contains("0 sent"), "{text}");
+}

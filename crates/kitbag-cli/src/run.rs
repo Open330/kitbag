@@ -45,7 +45,7 @@ pub fn status(
 ) -> Result<()> {
     let home = home();
     let cfg_path = config_path();
-    let config = Config::load_or_default(&cfg_path)?;
+    let config = Config::load_or_default(&cfg_path)?.with_env_skips();
     let wanted = wanted.unwrap_or_else(|| config.wanted());
 
     let Collected { items, skipped } = collect(&config, &home);
@@ -409,7 +409,7 @@ pub fn push(
     colour: Colour,
 ) -> Result<()> {
     let home = home();
-    let config = Config::load_or_default(&config_path())?;
+    let config = Config::load_or_default(&config_path())?.with_env_skips();
     let wanted = wanted.unwrap_or_else(|| config.wanted());
     let Collected { items, skipped } = collect(&config, &home);
 
@@ -423,8 +423,13 @@ pub fn push(
         .into_iter()
         .map(|l| (l.name, l.fingerprint))
         .collect();
-    let total = items.iter().filter(|i| wanted.accepts(&i.scope)).count();
+    let total = items
+        .iter()
+        .filter(|i| wanted.accepts(&i.scope) && !config.skips(&i.name))
+        .count();
     let mut at = 0usize;
+    // Named by this machine as its own business, in both directions.
+    let mut kept_back: Vec<String> = Vec::new();
     progress.clear();
 
     let mut sent = 0usize;
@@ -436,6 +441,10 @@ pub fn push(
     println!();
     for item in &items {
         if !wanted.accepts(&item.scope) {
+            continue;
+        }
+        if config.skips(&item.name) {
+            kept_back.push(item.name.clone());
             continue;
         }
         at += 1;
@@ -480,6 +489,13 @@ pub fn push(
             skipped.len()
         );
     }
+    if !kept_back.is_empty() {
+        println!(
+            "  {} kept on this machine: {}",
+            kept_back.len(),
+            kept_back.join(", ")
+        );
+    }
     if !failed.is_empty() {
         println!("  {} not sent:", failed.len());
         for (name, why) in &failed {
@@ -508,7 +524,7 @@ pub fn restore(
     colour: Colour,
 ) -> Result<()> {
     let home = home();
-    let config = Config::load_or_default(&config_path())?;
+    let config = Config::load_or_default(&config_path())?.with_env_skips();
     let wanted = wanted.unwrap_or_else(|| config.wanted());
     let Collected { items, .. } = collect(&config, &home);
 
@@ -541,6 +557,8 @@ pub fn restore(
     let mut unplaceable = Vec::new();
     // Items belonging to a platform that is not this one.
     let mut elsewhere: Vec<String> = Vec::new();
+    // Items this machine has said it keeps for itself.
+    let mut kept_back: Vec<String> = Vec::new();
     let here = kitbag_core::this_platform();
 
     progress.say("reading what the store holds");
@@ -557,6 +575,12 @@ pub fn restore(
         // scope in its listing can have an item turned away without the item
         // ever being fetched.
         if listing.scope.as_ref().is_some_and(|s| !wanted.accepts(s)) {
+            continue;
+        }
+        // Named by this machine as its own business. Cheap, and before
+        // anything is fetched.
+        if config.skips(name) {
+            kept_back.push(listing.name.clone());
             continue;
         }
         // A macOS keychain, or a bundle addressed to ~/Library, is not state
@@ -701,6 +725,16 @@ pub fn restore(
     } else {
         println!("  {written} written, {same} already here.");
     }
+    if !kept_back.is_empty() {
+        println!();
+        println!(
+            "  {} kept as this machine's own, not taken from the store:",
+            kept_back.len()
+        );
+        for name in &kept_back {
+            println!("  · {name}");
+        }
+    }
     if !elsewhere.is_empty() {
         println!();
         println!(
@@ -829,7 +863,7 @@ pub fn discover(write: bool, dismiss: Option<&str>, json: bool) -> Result<()> {
         return Ok(());
     }
 
-    let config = Config::load_or_default(&cfg_path)?;
+    let config = Config::load_or_default(&cfg_path)?.with_env_skips();
     let tracked: Vec<PathBuf> = collect(&config, &home)
         .items
         .into_iter()

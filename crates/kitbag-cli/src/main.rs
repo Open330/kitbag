@@ -48,6 +48,10 @@ struct Cli {
     #[arg(long, global = true, value_name = "NAME", env = "KITBAG_BACKEND")]
     backend: Option<String>,
 
+    /// Items this machine keeps for itself: a comma-separated list of names
+    #[arg(long, global = true, value_name = "LIST", env = "KITBAG_SKIP")]
+    skip: Option<String>,
+
     /// Machine-readable output
     #[arg(long, global = true)]
     json: bool,
@@ -181,6 +185,13 @@ fn main() -> Result<()> {
         ColourChoice::Never => Colour::Never,
         ColourChoice::Auto => Colour::resolve(None),
     };
+
+    // The config reads KITBAG_SKIP, so the flag and the variable are the same
+    // answer arriving by different routes. Putting the flag into the
+    // environment is how they become one route.
+    if let Some(list) = cli.skip.as_deref() {
+        std::env::set_var("KITBAG_SKIP", list);
+    }
 
     // Only an explicit --scope overrides the machine's own configuration;
     // otherwise the machine file decides what this machine is willing to hold.
