@@ -65,6 +65,7 @@ curl -LsSf https://raw.githubusercontent.com/Open330/kitbag/main/install.sh | sh
 kitbag status                 이 기계에 무엇이 있고, 저장소와 무엇이 다른지
 kitbag plan                   apply가 무엇을 바꿀지만 보여주고 멈춤
 kitbag apply                  기계를 레시피대로 맞춤
+                              (패키지·링크·defaults·다운로드·클론·병합)
 kitbag discover               아직 아무도 추적하지 않는 개인 상태를 찾아냄
 kitbag track <path> --scope work
 kitbag push / restore         scope 단위로 옮김

@@ -224,6 +224,21 @@ pub fn apply_recipe(
         };
         push(format!("defaults:{}.{}", key.domain, key.key), done);
     }
+    for d in &recipe.download {
+        push(
+            format!("fetch:{}", d.to),
+            crate::more::apply_download(d, home),
+        );
+    }
+    for c in &recipe.clone {
+        push(format!("clone:{}", c.to), crate::more::apply_clone(c, home));
+    }
+    for m in &recipe.merge {
+        push(
+            format!("merge:{}", m.to),
+            crate::more::apply_merge(m, home, repo),
+        );
+    }
     for cmd in &recipe.command {
         push(format!("run:{}", short(&cmd.run)), apply_command(cmd));
     }

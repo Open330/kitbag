@@ -89,6 +89,7 @@ it, and puts one binary in `~/.local/bin`. Or `cargo install --path crates/kitba
 kitbag status                 what this machine has, marked against the store
 kitbag plan                   what apply would change, and nothing else
 kitbag apply                  make the machine match the recipes
+                              (packages, links, defaults, downloads, clones, merges)
 kitbag discover               find personal state nothing is tracking yet
 kitbag track <path> --scope work
 kitbag push / restore         move it, one scope at a time

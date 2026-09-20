@@ -39,6 +39,45 @@ pub struct Recipe {
     pub defaults: Vec<DefaultsKey>,
     #[serde(default)]
     pub command: Vec<Command>,
+    #[serde(default)]
+    pub download: Vec<Download>,
+    #[serde(default)]
+    pub clone: Vec<Clone_>,
+    #[serde(default)]
+    pub merge: Vec<Merge>,
+}
+
+/// Something fetched from the internet, pinned to a hash.
+///
+/// The hash is the point. A recipe that downloads without one is a recipe that
+/// installs whatever that URL serves on the day it is run, which is not a
+/// description of a machine.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Download {
+    pub url: String,
+    pub sha256: String,
+    /// A file to write, or - with `extract` - a directory to unpack into.
+    pub to: String,
+    #[serde(default)]
+    pub extract: bool,
+}
+
+/// A repository somebody else maintains: a plugin manager, a theme, a tap.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Clone_ {
+    pub repo: String,
+    pub to: String,
+}
+
+/// A settings file that belongs to an application, which has its own opinions
+/// about the rest of it. Replacing such a file loses whatever the application
+/// put there; merging keeps both.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Merge {
+    pub from: String,
+    pub to: String,
+    /// `json` or `toml`.
+    pub format: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -104,6 +143,29 @@ impl Recipe {
     }
 }
 
+impl Download {
+    pub fn target(&self, home: &Path) -> PathBuf {
+        PathBuf::from(expand(&self.to, home))
+    }
+}
+
+impl Clone_ {
+    pub fn target(&self, home: &Path) -> PathBuf {
+        PathBuf::from(expand(&self.to, home))
+    }
+}
+
+impl Merge {
+    pub fn expanded(&self, home: &Path, repo: &Path) -> (PathBuf, PathBuf) {
+        let from = if self.from.starts_with('~') || self.from.starts_with('/') {
+            PathBuf::from(expand(&self.from, home))
+        } else {
+            repo.join(&self.from)
+        };
+        (from, PathBuf::from(expand(&self.to, home)))
+    }
+}
+
 impl Link {
     pub fn expanded(&self, home: &Path, repo: &Path) -> (PathBuf, PathBuf) {
         let from = if self.from.starts_with('~') || self.from.starts_with('/') {
@@ -158,6 +220,39 @@ mod tests {
         );
         assert!(r.recipes[1].applies_here("macos"));
         assert!(!r.recipes[1].applies_here("linux"));
+    }
+
+    #[test]
+    fn a_download_must_be_pinned_to_a_hash() {
+        let err = toml::from_str::<Recipes>(
+            r#"
+            [[recipe]]
+            name = "fonts"
+            [[recipe.download]]
+            url = "https://example.test/font.ttf"
+            to = "~/Library/Fonts/font.ttf"
+        "#,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("sha256"), "{err}");
+    }
+
+    #[test]
+    fn reads_downloads_clones_and_merges() {
+        let r: Recipes = toml::from_str(
+            r#"
+            [[recipe]]
+            name = "editor"
+            download = [{ url = "https://example.test/x.tar.gz", sha256 = "abc", to = "~/.local", extract = true }]
+            clone = [{ repo = "https://example.test/plugins.git", to = "~/.plugins" }]
+            merge = [{ from = "configs/settings.json", to = "~/.app/settings.json", format = "json" }]
+        "#,
+        )
+        .unwrap();
+        let r = &r.recipes[0];
+        assert!(r.download[0].extract);
+        assert_eq!(r.clone[0].repo, "https://example.test/plugins.git");
+        assert_eq!(r.merge[0].format, "json");
     }
 
     #[test]

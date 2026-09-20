@@ -32,6 +32,12 @@ pub struct Pass {
 }
 
 impl Pass {
+    /// A named client, for tests: PATH is process-wide, and tests share a
+    /// process. Anything that reached for PATH here would race the others.
+    pub fn with_bin(bin: impl Into<String>) -> Self {
+        Self { bin: bin.into() }
+    }
+
     pub fn new() -> Result<Self> {
         for bin in ["pass", "gopass"] {
             if Command::new(bin)
@@ -135,9 +141,17 @@ impl Backend for Pass {
 /// the service accounts, none of which kitbag wants to own.
 pub struct Op {
     vault: String,
+    bin: String,
 }
 
 impl Op {
+    pub fn with_bin(bin: impl Into<String>, vault: impl Into<String>) -> Self {
+        Self {
+            bin: bin.into(),
+            vault: vault.into(),
+        }
+    }
+
     pub fn new() -> Result<Self> {
         let ok = Command::new("op")
             .args(["--version"])
@@ -151,11 +165,12 @@ impl Op {
         }
         Ok(Self {
             vault: std::env::var("KITBAG_OP_VAULT").unwrap_or_else(|_| PREFIX.to_string()),
+            bin: "op".into(),
         })
     }
 
     fn run(&self, args: &[&str]) -> Result<String> {
-        let out = Command::new("op").args(args).output()?;
+        let out = Command::new(&self.bin).args(args).output()?;
         if !out.status.success() {
             let err = String::from_utf8_lossy(&out.stderr);
             bail!("op {}: {}", args.first().unwrap_or(&""), err.trim());
@@ -226,6 +241,33 @@ impl Backend for Op {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kitbag_core::Scope;
+
+    /// A `pass` that keeps entries as files in a directory. Every command the
+    /// wrapper uses, and nothing else - which is the point: this tests the
+    /// wrapper, not somebody else's password manager.
+    fn stub_pass(dir: &std::path::Path) -> String {
+        let bin = dir.join("pass-stub");
+        let script = format!(
+            r#"#!/bin/sh
+store="{}/store"
+mkdir -p "$store"
+case "$1" in
+  version) echo "stub" ;;
+  ls) ls "$store" 2>/dev/null | sed 's/^/├── /' | sed '1i\
+kitbag' ;;
+  show) cat "$store/$(echo "$2" | sed 's|kitbag/||')" ;;
+  insert) cat > "$store/$(echo "$4" | sed 's|kitbag/||')" ;;
+  *) exit 1 ;;
+esac
+"#,
+            dir.display()
+        );
+        std::fs::write(&bin, script).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        bin.to_string_lossy().into_owned()
+    }
 
     #[test]
     fn a_kitbag_name_becomes_a_pass_path() {
@@ -234,6 +276,126 @@ mod tests {
             Pass::entry("ssh:config-20-work"),
             "kitbag/ssh-config-20-work"
         );
+    }
+
+    /// An `op` that keeps notes as files. It answers the four calls the
+    /// wrapper makes, including failing `item edit` for an item that is not
+    /// there - which is the branch the create path depends on.
+    ///
+    /// Written with a placeholder rather than `format!`: a shell script is
+    /// most of a page of braces, and escaping them all is how a stub ends up
+    /// testing its own syntax errors.
+    fn stub_op(dir: &std::path::Path) -> String {
+        const SCRIPT: &str = r#"#!/bin/sh
+store="STORE_DIR/op"
+mkdir -p "$store"
+case "$1 $2" in
+  "--version"*)
+    echo "2.0.0" ;;
+  "item list")
+    printf '['
+    first=1
+    for f in "$store"/*; do
+      [ -e "$f" ] || continue
+      [ $first -eq 1 ] || printf ','
+      first=0
+      printf '{"title":"%s"}' "$(basename "$f")"
+    done
+    printf ']'
+    ;;
+  "read "*)
+    name=$(basename "$(dirname "$2")")
+    cat "$store/$name" ;;
+  "item edit")
+    [ -f "$store/$3" ] || exit 1
+    printf '%s' "$6" | sed 's/^notesPlain=//' > "$store/$3" ;;
+  "item create")
+    title=""; note=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --title) title="$2"; shift 2 ;;
+        notesPlain=*) note=${1#notesPlain=}; shift ;;
+        *) shift ;;
+      esac
+    done
+    printf '%s' "$note" > "$store/$title" ;;
+  *)
+    exit 1 ;;
+esac
+"#;
+        let bin = dir.join("op-stub");
+        std::fs::write(
+            &bin,
+            SCRIPT.replace("STORE_DIR", &dir.display().to_string()),
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        bin.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn an_item_is_created_then_edited_in_a_1password_vault() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Op::with_bin(stub_op(dir.path()), "kitbag");
+
+        // create, because nothing is there to edit
+        store
+            .put("env:ci", &Envelope::new(Scope::Work, b"one".to_vec()))
+            .unwrap();
+        assert_eq!(store.get("env:ci").unwrap().payload, b"one");
+
+        // and then edit, which is the common case once a machine has pushed
+        store
+            .put("env:ci", &Envelope::new(Scope::Work, b"two".to_vec()))
+            .unwrap();
+        assert_eq!(store.get("env:ci").unwrap().payload, b"two");
+
+        let names: Vec<_> = store.list().unwrap().into_iter().map(|l| l.name).collect();
+        assert_eq!(names, ["env:ci"]);
+    }
+
+    #[test]
+    fn an_item_survives_the_trip_through_a_pass_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Pass::with_bin(stub_pass(dir.path()));
+        let env = Envelope::new(Scope::Work, b"TOKEN=x\n".to_vec()).with_owner(Some("acme".into()));
+
+        store.put("env:ci", &env).unwrap();
+        let back = store.get("env:ci").unwrap();
+
+        assert_eq!(
+            back.payload, b"TOKEN=x\n",
+            "a trailing newline is part of a file"
+        );
+        assert_eq!(back.scope, Scope::Work);
+        assert_eq!(back.owner.as_deref(), Some("acme"));
+    }
+
+    #[test]
+    fn a_pass_store_lists_what_it_holds_under_the_names_it_was_given() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Pass::with_bin(stub_pass(dir.path()));
+        store
+            .put(
+                "ssh:config-20-work",
+                &Envelope::new(Scope::Work, b"x".to_vec()),
+            )
+            .unwrap();
+
+        let names: Vec<_> = store.list().unwrap().into_iter().map(|l| l.name).collect();
+        assert_eq!(
+            names,
+            ["ssh:config-20-work"],
+            "a name with hyphens must come back whole"
+        );
+    }
+
+    #[test]
+    fn a_pass_store_that_is_empty_is_not_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Pass::with_bin(stub_pass(dir.path()));
+        assert!(store.list().unwrap().is_empty());
     }
 
     #[test]

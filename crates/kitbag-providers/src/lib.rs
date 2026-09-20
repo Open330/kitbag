@@ -10,6 +10,7 @@
 //! plan it could not compute is not one it may execute.
 
 pub mod apply;
+pub mod more;
 
 use std::path::Path;
 use std::process::Command as Proc;
@@ -17,6 +18,7 @@ use std::process::Command as Proc;
 use kitbag_core::recipe::{Command, DefaultsKey, Link, Recipe};
 
 pub use apply::{apply_recipe, Applied, Done};
+pub use more::{apply_clone, apply_download, apply_merge, plan_clone, plan_download, plan_merge};
 
 /// What applying this resource would do.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -148,6 +150,27 @@ pub fn plan_recipe(
             } else {
                 Action::Unknown("defaults are a macOS thing".into())
             },
+        });
+    }
+    for d in &recipe.download {
+        steps.push(Step {
+            recipe: recipe.name.clone(),
+            id: format!("fetch:{}", d.to),
+            action: more::plan_download(d, home),
+        });
+    }
+    for c in &recipe.clone {
+        steps.push(Step {
+            recipe: recipe.name.clone(),
+            id: format!("clone:{}", c.to),
+            action: more::plan_clone(c, home),
+        });
+    }
+    for m in &recipe.merge {
+        steps.push(Step {
+            recipe: recipe.name.clone(),
+            id: format!("merge:{}", m.to),
+            action: more::plan_merge(m, home, repo),
         });
     }
     for cmd in &recipe.command {

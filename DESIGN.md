@@ -400,7 +400,8 @@ The port is largely reading files that already exist.
 | editor | "install unless the version is at least X" | a version predicate on `pkg` |
 
 Six providers — `merge`, `download`, `git-clone`, plus `pkg`/`link`/`defaults` —
-turn all of this into TOML.
+turn all of this into TOML. **All six exist**, along with the `command` escape
+hatch; what remains unported is the handful of modules in the next table.
 
 ### Genuinely imperative, and staying that way
 
