@@ -68,7 +68,10 @@ fn adding_a_platform_tag_is_something_to_send() {
     .unwrap();
 
     let out = kitbag(home.path(), state.path(), &["push", "--backend", "bw"]);
-    assert!(out.contains("1 sent"), "the tag has to reach the store:\n{out}");
+    assert!(
+        out.contains("1 sent"),
+        "the tag has to reach the store:\n{out}"
+    );
 }
 
 #[test]
@@ -84,4 +87,47 @@ fn changing_an_owner_is_something_to_send() {
 
     let out = kitbag(home.path(), state.path(), &["push", "--backend", "bw"]);
     assert!(out.contains("1 sent"), "{out}");
+}
+
+fn calls(state: &Path) -> Vec<String> {
+    std::fs::read_to_string(state.join("calls.log"))
+        .unwrap_or_default()
+        .lines()
+        .map(|l| l.trim().to_string())
+        .collect()
+}
+
+#[test]
+fn updating_one_attachment_item_costs_four_calls() {
+    // Every call to the Bitwarden client is a node process costing over a
+    // second on the machine this was measured on, so the count is the runtime.
+    // It was six: a folder listing that the item listing already answered, and
+    // a re-read of what had just been written that nothing goes on to read.
+    let (home, state) = machine(PLAIN);
+    std::fs::write(
+        home.path().join(".envs/one.env"),
+        format!("# scope: personal\nA={}\n", "x".repeat(30_000)),
+    )
+    .unwrap();
+    kitbag(home.path(), state.path(), &["push", "--backend", "bw"]);
+
+    std::fs::write(state.path().join("calls.log"), "").expect("reset");
+    std::fs::write(
+        home.path().join(".envs/one.env"),
+        format!("# scope: personal\nA={}\n", "y".repeat(30_000)),
+    )
+    .unwrap();
+    kitbag(home.path(), state.path(), &["push", "--backend", "bw"]);
+
+    let made = calls(state.path());
+    assert_eq!(
+        made,
+        vec![
+            "list items",
+            "edit item",
+            "create attachment",
+            "delete attachment",
+        ],
+        "one listing, and three writes that each have to happen"
+    );
 }

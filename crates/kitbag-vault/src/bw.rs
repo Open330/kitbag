@@ -55,6 +55,9 @@ pub struct Bw {
     /// thirty-nine items used to cost thirty-nine of them.
     items: Mutex<Option<Vec<serde_json::Value>>>,
     folder: Mutex<Option<String>>,
+    /// Items this run wrote whose cached copy was dropped, and the id to
+    /// re-read them by if anything asks.
+    stale: Mutex<std::collections::HashMap<String, String>>,
 }
 
 impl Bw {
@@ -73,6 +76,7 @@ impl Bw {
             session: std::env::var("BW_SESSION").ok(),
             items: Mutex::new(None),
             folder: Mutex::new(None),
+            stale: Mutex::new(std::collections::HashMap::new()),
         })
     }
 
@@ -117,6 +121,19 @@ impl Bw {
     }
 
     fn item_named(&self, name: &str) -> Result<Option<serde_json::Value>> {
+        // Marked behind by a write this run made: re-read the one item rather
+        // than the vault, and only because something actually asked.
+        let behind = self
+            .stale
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(name);
+        if let Some(id) = behind {
+            let fresh: serde_json::Value =
+                serde_json::from_str(&self.call(&["get", "item", &id], None)?)?;
+            self.remember(fresh.clone());
+            return Ok(Some(fresh));
+        }
         self.with_items(|all| {
             all.iter()
                 .find(|i| i.get("name").and_then(|n| n.as_str()) == Some(name))
@@ -124,12 +141,22 @@ impl Bw {
         })
     }
 
-    /// Re-read one item, for a write whose result this does not fully know.
-    /// One item, not the vault: `bw get item` decrypts what was asked for.
-    fn refresh(&self, id: &str) -> Result<()> {
-        let out = self.call(&["get", "item", id], None)?;
-        self.remember(serde_json::from_str(&out)?);
-        Ok(())
+    /// Note that this item's cached copy is behind, and where to get a fresh
+    /// one if anybody asks. Nobody usually does: a push writes each item once
+    /// and never reads it back, so the call this defers is a call that is
+    /// never made.
+    /// Note that this item's attachment list is behind, and where to get a
+    /// fresh one. What was written is cached as written, so a listing in the
+    /// same run still sees the item; only the part this does not know — the id
+    /// bw assigned the new attachment — is marked for re-reading. Nobody
+    /// usually reads it: a push writes each item once, so the call this defers
+    /// is a call that is never made.
+    fn stale(&self, item: serde_json::Value, name: &str, id: &str) {
+        self.remember(item);
+        self.stale
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(name.to_string(), id.to_string());
     }
 
     /// Keep the cache true after a write, rather than dropping it: a push
@@ -165,6 +192,19 @@ impl Bw {
             .unwrap_or_else(|e| e.into_inner())
             .clone()
         {
+            return Ok(id);
+        }
+        // Every item already listed says which folder it is in, and they are
+        // all in this one. Asking bw for the folder list is a second process
+        // spent learning what is in hand.
+        if let Some(id) = self.with_items(|all| {
+            all.iter().find_map(|i| {
+                i.get("folderId")
+                    .and_then(|f| f.as_str())
+                    .map(str::to_string)
+            })
+        })? {
+            *self.folder.lock().unwrap_or_else(|e| e.into_inner()) = Some(id.clone());
             return Ok(id);
         }
         if let Some(id) = self.folder_id()? {
@@ -316,6 +356,8 @@ impl Backend for Bw {
             return Ok(());
         }
 
+        let stale_id = id.clone();
+
         // Which attachments were already here, so the ones replaced can go and
         // nothing that arrived later is mistaken for them.
         let replaced = existing.as_ref().map(attachment_ids).unwrap_or_default();
@@ -352,9 +394,11 @@ impl Backend for Bw {
         }
 
         // The new attachment's id is bw's to assign, and caching a guess at it
-        // would have this tool delete the wrong one next time. Ask for the one
-        // item rather than the vault.
-        self.refresh(&id)?;
+        // would have this tool delete the wrong one next time. So what is known
+        // is cached, and the rest is marked for re-reading if anything asks.
+        let mut written = body;
+        written["id"] = serde_json::Value::String(id);
+        self.stale(written, name, &stale_id);
         Ok(())
     }
 }
