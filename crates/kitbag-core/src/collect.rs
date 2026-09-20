@@ -257,7 +257,28 @@ fn read_item(path: &Path, track: &Track, home: &Path) -> Result<Item, Reason> {
 /// env files, npmrc, ini, toml all answer to this. Never the values.
 const KEYS_SHOWN: usize = 12;
 
+/// A name a person chose, as opposed to a piece of somebody's key.
+///
+/// This is the line that matters. Base64 is full of `=`, so a private key
+/// splits into "names" that are the key itself - and printing one in a report
+/// is the exact failure this tool exists to avoid. Anything that does not look
+/// like an identifier, or that the rule set recognises as a secret, is not a
+/// name.
+fn is_a_name(key: &str) -> bool {
+    !key.is_empty()
+        && key.len() <= 40
+        && key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "_-.".contains(c))
+        && crate::lint::check(key).is_empty()
+}
+
 fn key_names(text: &str) -> String {
+    // A key file is not a settings file, whatever its punctuation suggests.
+    if text.contains("PRIVATE KEY") || text.starts_with("ssh-") {
+        return String::new();
+    }
+
     let mut seen: Vec<String> = Vec::new();
     for line in text.lines() {
         let line = line.trim();
@@ -268,7 +289,7 @@ fn key_names(text: &str) -> String {
             continue;
         };
         let key = left.trim().trim_start_matches("export ").trim().to_string();
-        if key.is_empty() || key.len() > 60 || key.contains(' ') {
+        if !is_a_name(&key) {
             continue;
         }
         if !seen.contains(&key) {
@@ -491,6 +512,55 @@ mod tests {
         assert_eq!(detail, "DB_URL DB_USER");
         assert!(!detail.contains("postgres"));
         assert!(!detail.contains("admin"));
+    }
+
+    #[test]
+    fn a_private_key_never_shows_any_of_itself() {
+        let h = home();
+        // The shape that caused this: base64 is full of `=`, so a key file
+        // splits into "names" that are the key.
+        let header = format!("-----{} OPENSSH PRIVATE KEY-----", "BEGIN"); // lint:allow
+        let body = format!(
+            "{header}\n{}{}{}=\n{}\n",
+            "b3BlbnNzaC1rZXkt",
+            "djEAAAAABG5vbmUA",
+            "AAAEbm9uZQAAAAtz",
+            header.replace("BEGIN", "END")
+        );
+        write(h.path(), ".ssh/id_ed25519", &body);
+
+        let got = collect(
+            &config("[[track]]\npath = \"~/.ssh/id_ed25519\"\nscope = \"personal\""),
+            h.path(),
+        );
+        let detail = got.items[0].detail();
+
+        assert!(detail.ends_with("lines"), "{detail}");
+        for fragment in ["b3Blbn", "djEAAA", "bm9uZQ"] {
+            assert!(!detail.contains(fragment), "the key leaked into {detail}");
+        }
+    }
+
+    #[test]
+    fn a_public_key_file_shows_no_key_material_either() {
+        let h = home();
+        write(
+            h.path(),
+            ".ssh/authorized_keys",
+            &format!(
+                "# scope: personal\nssh-ed25519 {}{} laptop\n",
+                "AAAAC3NzaC1lZDI1", "NTE5AAAAIabcdefgh"
+            ),
+        );
+        let got = collect(
+            &config("[[track]]\npath = \"~/.ssh/authorized_keys\""),
+            h.path(),
+        );
+        assert!(
+            !got.items[0].detail().contains("AAAA"),
+            "{}",
+            got.items[0].detail()
+        );
     }
 
     #[test]
