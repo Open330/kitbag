@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="kitbag">
+  <title>kitbag</title>
+  <style>
+    .tile { fill: #16181d; }
+    .letter { fill: #f4f4f7; }
+    .part { fill: #818cf8; }
+    @media (prefers-color-scheme: dark) {
+      .tile { fill: #e6edf3; }
+      .letter { fill: #0e1014; }
+      .part { fill: #4f46e5; }
+    }
+  </style>
+  <rect class="tile" width="64" height="64" rx="15"/>
+  <mask id="cuti"><rect width="64" height="64" fill="#fff"/><path d="M28.6 31.4 L40.2 37.0" stroke="#000" stroke-width="3"/></mask>
+  <clipPath id="armi"><polygon points="29.70,33.80 37.64,19.44 49.03,19.44 38.47,38.02"/></clipPath>
+  <g transform="translate(2.5 0)" mask="url(#cuti)">
+    <path class="letter" d="M15.27 56V8h9.86v25.51h5l7.56-13.68h10.85l-10.06 17.69L48.73 56H37.69l-7.63-14.2h-4.93V56z"/>
+    <g clip-path="url(#armi)"><path class="part" d="M15.27 56V8h9.86v25.51h5l7.56-13.68h10.85l-10.06 17.69L48.73 56H37.69l-7.63-14.2h-4.93V56z"/></g>
+  </g>
+</svg>

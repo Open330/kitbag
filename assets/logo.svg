@@ -1,23 +1,18 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="kitbag">
   <title>kitbag</title>
-  <desc>A bag you carry, with one part of what is inside kept separate.</desc>
+  <desc>The k of a terminal typeface, with the arm that belongs elsewhere cut free and marked.</desc>
   <style>
-    .body { fill: #16181d; }
-    .handle { stroke: #16181d; }
+    .ink { fill: #16181d; }
     .part { fill: #6366f1; }
     @media (prefers-color-scheme: dark) {
-      .body { fill: #e6edf3; }
-      .handle { stroke: #e6edf3; }
+      .ink { fill: #e6edf3; }
       .part { fill: #818cf8; }
     }
   </style>
-  <path class="handle" d="M23.5 23v-3.5a8.5 8.5 0 0 1 17 0V23" fill="none" stroke-width="3.6" stroke-linecap="round"/>
-  <mask id="k">
-    <rect x="6" y="23" width="52" height="34" rx="10" fill="#fff"/>
-    <rect x="43" y="23" width="2.6" height="34" fill="#000"/>
-  </mask>
-  <g mask="url(#k)">
-    <rect class="body" x="6" y="23" width="52" height="34" rx="10"/>
-    <rect class="part" x="45.6" y="23" width="12.4" height="34"/>
+  <mask id="cut"><rect width="64" height="64" fill="#fff"/><path d="M28.6 31.4 L40.2 37.0" stroke="#000" stroke-width="3"/></mask>
+  <clipPath id="arm"><polygon points="29.70,33.80 37.64,19.44 49.03,19.44 38.47,38.02"/></clipPath>
+  <g mask="url(#cut)">
+    <path class="ink" d="M15.27 56V8h9.86v25.51h5l7.56-13.68h10.85l-10.06 17.69L48.73 56H37.69l-7.63-14.2h-4.93V56z"/>
+    <g clip-path="url(#arm)"><path class="part" d="M15.27 56V8h9.86v25.51h5l7.56-13.68h10.85l-10.06 17.69L48.73 56H37.69l-7.63-14.2h-4.93V56z"/></g>
   </g>
 </svg>
