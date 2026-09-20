@@ -93,7 +93,14 @@ enum Command {
     },
 
     /// Find personal state that nothing is tracking yet
-    Discover,
+    Discover {
+        /// Add everything found to this machine's config
+        #[arg(long)]
+        write: bool,
+        /// Never propose this path again
+        #[arg(long, value_name = "PATH")]
+        dismiss: Option<String>,
+    },
 
     /// Start tracking a path
     Track {
@@ -167,6 +174,12 @@ fn main() -> Result<()> {
         Command::Apply { ref only, yes } => {
             run::apply(&repo_root(), only.as_deref(), yes, colour, width)?
         }
+        Command::Discover { write, ref dismiss } => run::discover(write, dismiss.as_deref())?,
+        Command::Track {
+            ref path,
+            ref scope,
+            ref owner,
+        } => run::track(path, scope.as_deref(), owner.as_deref())?,
         Command::Push { dry_run } => run::push(cli.backend.as_deref(), wanted, dry_run)?,
         Command::Restore { dry_run } => run::restore(cli.backend.as_deref(), wanted, dry_run)?,
         other => {
@@ -189,7 +202,7 @@ fn name_of(c: &Command) -> &'static str {
         Command::Status => "status",
         Command::Plan => "plan",
         Command::Apply { .. } => "apply",
-        Command::Discover => "discover",
+        Command::Discover { .. } => "discover",
         Command::Track { .. } => "track",
         Command::Push { .. } => "push",
         Command::Restore { .. } => "restore",

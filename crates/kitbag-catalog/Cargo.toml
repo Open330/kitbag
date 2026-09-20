@@ -1,0 +1,15 @@
+[package]
+name = "kitbag-catalog"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Where credentials are known to live, and how to notice the rest"
+
+[dependencies]
+glob = "0.3"
+kitbag-core = { path = "../kitbag-core" }
+
+[dev-dependencies]
+tempfile = "3"

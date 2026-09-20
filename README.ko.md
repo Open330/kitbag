@@ -22,8 +22,8 @@
 </div>
 
 > **상태: 초기.** `status`·`plan`·`apply`·`push`·`restore`가 실제 기계와 실제
-> Bitwarden/Vaultwarden 볼트를 상대로 동작합니다. `discover`·`doctor`·`lint`·
-> `trust`는 아직 스텁이고, 저장소는 `bw`만 구현됐습니다 — 근거와 계획은
+> Bitwarden/Vaultwarden 볼트를 상대로 동작합니다. `discover`는 추적 안 된 것을 찾아
+> 제안합니다. `doctor`·`lint`·`trust`는 아직 스텁이고, 저장소는 `bw`만 구현됐습니다 — 근거와 계획은
 > [DESIGN.md](DESIGN.md)에 있습니다.
 
 ## 아무도 답하지 않는 질문

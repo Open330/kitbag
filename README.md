@@ -43,9 +43,9 @@ $ kitbag status
 ```
 
 > **Status: early.** `status`, `plan`, `apply`, `push` and `restore` work
-> against a real machine and a real Bitwarden/Vaultwarden vault. `discover`,
-> `doctor`, `lint` and `trust` are still stubs, and only the `bw` store is
-> written so far. See [DESIGN.md](DESIGN.md) for the argument and the plan.
+> against a real machine and a real Bitwarden/Vaultwarden vault. `discover` proposes what is
+> untracked. `doctor`, `lint` and `trust` are still stubs, and only the `bw`
+> store is written so far. See [DESIGN.md](DESIGN.md) for the argument and the plan.
 
 ## The question nothing answers
 

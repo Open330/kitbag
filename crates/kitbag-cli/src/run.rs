@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+use kitbag_catalog::{scan, Finding, Source};
 use kitbag_core::collect::{collect, Collected};
 use kitbag_core::recipe::Recipes;
 use kitbag_core::state::{compare, orphans, Remote, State};
@@ -531,6 +532,155 @@ fn backup_beside(path: &Path) -> PathBuf {
     let mut name = path.as_os_str().to_os_string();
     name.push(format!(".backup.{stamp}"));
     PathBuf::from(name)
+}
+
+fn dismissed_path() -> PathBuf {
+    config_path()
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join("dismissed")
+}
+
+fn dismissed() -> Vec<PathBuf> {
+    std::fs::read_to_string(dismissed_path())
+        .map(|s| {
+            s.lines()
+                .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
+                .map(PathBuf::from)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// What is here that nothing is tracking yet.
+///
+/// The question a person cannot answer for themselves is *what have I
+/// forgotten* — and the usual way to find out is to hit the missing thing a
+/// week later, in the middle of something else.
+pub fn discover(write: bool, dismiss: Option<&str>) -> Result<()> {
+    let home = home();
+    let cfg_path = config_path();
+
+    if let Some(path) = dismiss {
+        let full = PathBuf::from(kitbag_core::config::expand(path, &home));
+        let file = dismissed_path();
+        if let Some(parent) = file.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut list = std::fs::read_to_string(&file).unwrap_or_default();
+        list.push_str(&format!("{}\n", full.display()));
+        std::fs::write(&file, list)?;
+        println!(
+            "  dismissed {} — it will not come up again",
+            pretty(&full, &home)
+        );
+        return Ok(());
+    }
+
+    let config = Config::load_or_default(&cfg_path)?;
+    let tracked: Vec<PathBuf> = collect(&config, &home)
+        .items
+        .into_iter()
+        .map(|i| i.path)
+        .collect();
+
+    let found = scan(&home, &tracked, &dismissed());
+    if found.is_empty() {
+        println!();
+        println!(
+            "  Nothing new. Everything this knows to look for is either tracked or dismissed."
+        );
+        return Ok(());
+    }
+
+    println!();
+    for f in &found {
+        let source = match f.source {
+            Source::Catalogue => "known place",
+            Source::Noticed => "noticed",
+        };
+        println!(
+            "  {} {:<44} {} · {}",
+            if f.scope == "auto" { '?' } else { '+' },
+            f.shown(&home),
+            f.why,
+            source
+        );
+    }
+
+    println!();
+    if write {
+        append_tracks(&cfg_path, &found, &home)?;
+        println!(
+            "  Added {} entry(s) to {}.",
+            found.len(),
+            cfg_path.display()
+        );
+        println!("  A file marked ? must carry its own `# scope:` line, or it will be skipped.");
+    } else {
+        println!("  {} not tracked. To take them all:", found.len());
+        println!("    kitbag discover --write");
+        println!("  or paste what you want into {}:", cfg_path.display());
+        println!();
+        for f in &found {
+            for line in f.as_toml(&home).lines() {
+                println!("    {line}");
+            }
+        }
+        println!("    (and `kitbag discover --dismiss <path>` for the ones you never want)");
+    }
+    Ok(())
+}
+
+/// Add one path by hand.
+pub fn track(path: &str, scope: Option<&str>, owner: Option<&str>) -> Result<()> {
+    let home = home();
+    let cfg_path = config_path();
+    let full = PathBuf::from(kitbag_core::config::expand(path, &home));
+
+    if !full.exists() && !path.contains('*') {
+        println!(
+            "  {} is not here. Tracking it anyway — say so if that is a typo.",
+            pretty(&full, &home)
+        );
+    }
+
+    let mut entry = format!("\n[[track]]\npath = \"{path}\"\n");
+    if let Some(s) = scope {
+        // Refuse a scope this version does not know, rather than writing a
+        // config that will fail quietly on the next run.
+        let _: kitbag_core::Scope = s.parse()?;
+        entry.push_str(&format!("scope = \"{s}\"\n"));
+    }
+    if let Some(o) = owner {
+        entry.push_str(&format!("owner = \"{o}\"\n"));
+    }
+
+    if let Some(parent) = cfg_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut current = std::fs::read_to_string(&cfg_path).unwrap_or_default();
+    current.push_str(&entry);
+    std::fs::write(&cfg_path, current)?;
+
+    println!("  tracking {} in {}", path, cfg_path.display());
+    if scope.is_none() {
+        println!("  no scope given, so the file must carry its own `# scope:` line.");
+    }
+    Ok(())
+}
+
+fn append_tracks(cfg_path: &Path, found: &[Finding], home: &Path) -> Result<()> {
+    if let Some(parent) = cfg_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut current = std::fs::read_to_string(cfg_path).unwrap_or_default();
+    for f in found {
+        current.push('\n');
+        current.push_str(&f.as_toml(home));
+    }
+    std::fs::write(cfg_path, current)?;
+    Ok(())
 }
 
 #[cfg(test)]
