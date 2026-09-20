@@ -84,8 +84,7 @@ impl AgeFile {
         if plain.trim().is_empty() {
             return Ok(BTreeMap::new());
         }
-        Ok(serde_json::from_str(&plain)
-            .context("the store is not in a shape this version reads")?)
+        serde_json::from_str(&plain).context("the store is not in a shape this version reads")
     }
 
     fn write_all(&self, items: &BTreeMap<String, String>) -> Result<()> {

@@ -50,7 +50,12 @@ impl Pass {
 
     fn entry(name: &str) -> String {
         // `pass` names entries by path, and a kitbag name has a colon in it.
-        format!("{PREFIX}/{}", name.replace(':', "-"))
+        format!("{PREFIX}/{}", name.replacen(':', "-", 1))
+    }
+
+    /// The inverse: the first hyphen is the colon that was replaced.
+    fn name_of(entry: &str) -> String {
+        entry.replacen('-', ":", 1)
     }
 }
 
@@ -75,7 +80,10 @@ impl Backend for Pass {
                     .trim_start_matches(|c: char| c.is_whitespace() || "│├└─".contains(c))
                     .trim();
                 (!name.is_empty()).then(|| Listing {
-                    name: name.replace('-', ":").replacen(':', ":", 1),
+                    // The inverse of `entry`: only the first hyphen was a
+                    // colon. Replacing them all turns ssh:config-20-work into
+                    // something no other command would recognise.
+                    name: Self::name_of(name),
                     // The hash lives in the envelope, which means reading the
                     // entry - so a `pass` store answers "I cannot say cheaply".
                     payload_hash: None,
