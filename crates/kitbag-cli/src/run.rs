@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use kitbag_catalog::{scan, Finding, Source};
 use kitbag_core::collect::{collect, Collected};
 use kitbag_core::recipe::Recipes;
@@ -418,6 +418,10 @@ pub fn push(backend: Option<&str>, wanted: Option<Wanted>, dry_run: bool) -> Res
 
     let mut sent = 0usize;
     let mut same = 0usize;
+    // One item the store will not take must not decide the fate of the other
+    // thirty-eight. Each failure is reported where it happens, the run
+    // continues, and the exit status at the end is the whole truth about it.
+    let mut failed: Vec<(String, String)> = Vec::new();
     println!();
     for item in &items {
         if !wanted.accepts(&item.scope) {
@@ -440,10 +444,14 @@ pub fn push(backend: Option<&str>, wanted: Option<Wanted>, dry_run: bool) -> Res
                             // back the way it came out, through the app.
                             kitbag_core::collect::Source::Command { .. } => None,
                         });
-                    store
-                        .put(&item.name, &envelope)
-                        .with_context(|| format!("sending {}", item.name))?;
-                    println!("  {} {:<28} sent", state.glyph(), item.name);
+                    match store.put(&item.name, &envelope) {
+                        Ok(()) => println!("  {} {:<28} sent", state.glyph(), item.name),
+                        Err(e) => {
+                            println!("  ✗ {:<28} {}", item.name, root_cause(&e));
+                            failed.push((item.name.clone(), root_cause(&e)));
+                            continue;
+                        }
+                    }
                 }
                 sent += 1;
             }
@@ -462,7 +470,20 @@ pub fn push(backend: Option<&str>, wanted: Option<Wanted>, dry_run: bool) -> Res
             skipped.len()
         );
     }
+    if !failed.is_empty() {
+        println!("  {} not sent:", failed.len());
+        for (name, why) in &failed {
+            println!("    {name}: {why}");
+        }
+        bail!("{} item(s) did not reach the store", failed.len());
+    }
     Ok(())
+}
+
+/// The bottom of an error chain: what `bw` or the filesystem actually said,
+/// rather than the sentence kitbag wrapped around it.
+fn root_cause(e: &anyhow::Error) -> String {
+    e.chain().last().map(|c| c.to_string()).unwrap_or_default()
 }
 
 /// Write what the store holds back onto this machine.
