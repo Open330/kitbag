@@ -349,10 +349,11 @@ at any point.
 
 ## 13. Open questions
 
-1. **Recipes: data or code?** TOML covers brew/link/defaults. Things like "nvm,
-   then node 24, then these globals" want ordering and conditionals. Start with
-   TOML plus an escape hatch (`command` with an idempotency check), and see what
-   the escape hatch is used for before inventing a language.
+1. ~~**Recipes: data or code?**~~ **Answered — see appendix A.** Twenty-two
+   modules of a working bash installer were classified line by line. Roughly
+   four fifths is data once six providers exist; the imperative fifth is almost
+   entirely *other people's installers* (rustup, uv, nvm), which belong behind
+   an escape hatch permanently rather than in a language of our own.
 2. **Where does the public/private line fall for recipes?** A work machine's
    recipe list may itself be sensitive. Probably: recipes public, the machine's
    selection private.
@@ -361,3 +362,74 @@ at any point.
    people's machines. Default: never remove, report drift.
 4. **Windows.** WSL is covered by the Linux target. Native Windows is not in
    scope until someone needs it.
+
+---
+
+## Appendix A. What is data and what is not
+
+The recipes were not designed in the abstract. A working bash installer — 22
+modules, ~3,500 lines, in daily use on five machines — was read and classified.
+
+### Pure data, once the provider exists
+
+| Module | What it does | Provider |
+| --- | --- | --- |
+| base | packages, Xcode command line tools | `pkg` |
+| cmux, ghostty, hammerspoon, zellij | a cask and a config file | `pkg`, `link` |
+| shell, tmux | a package, a config, a plugin manager clone | `pkg`, `link`, `git-clone` |
+| fonts | casks plus a pinned download with a checksum | `pkg`, `download` |
+| git | an include and a signing setting | `git-config` |
+| scripts | a directory of links into `~/.local/bin` | `link` (glob) |
+| ssh | configs copied, never symlinked | `copy` (mode-aware) |
+| macos | 60-odd `defaults` keys, already held in TSV tables | `defaults` |
+| tools | a tool list with a fallback chain per platform | `pkg` (ordered sources) |
+
+That is more than half the modules and most of the lines. Note what made it
+easy: the bash version had already pushed its own data out of its code — the
+macOS defaults live in tables, the shortcuts in a TSV, the skills in a manifest.
+The port is largely reading files that already exist.
+
+### Data, but needing a provider that does not exist yet
+
+| Module | What it needs | Why a provider and not a script |
+| --- | --- | --- |
+| claude | merge a JSON settings file, link a manifest of skills | merging is the hard part, and it is the same merge every time |
+| codex | merge a TOML config | same |
+| cship, editor | download a release, verify a checksum, place a binary | the checksum is the point; a script that forgets it is worse than no script |
+| node, rust, python | global packages (`npm -g`, `cargo`, `uv`) | a list of names, once the runtime exists |
+| editor | "install unless the version is at least X" | a version predicate on `pkg` |
+
+Six providers — `merge`, `download`, `git-clone`, plus `pkg`/`link`/`defaults` —
+turn all of this into TOML.
+
+### Genuinely imperative, and staying that way
+
+| What | Why it cannot be data |
+| --- | --- |
+| rustup, uv, nvm bootstraps | they are *somebody else's installer*, fetched and run. Modelling them would mean tracking their internals forever |
+| node via nvm | nvm is a shell function; using it means sourcing a script and inheriting its environment |
+| macOS Caps Lock mapping | the value is computed from the keyboards attached right now |
+| `pmset`, `launchctl` | sudo, and side effects that are not files |
+| hishtory init | a server handshake with a secret |
+
+Five of twenty-two, and four of those five are "run the vendor's installer".
+
+### What follows
+
+Recipes are TOML over typed providers, with one escape hatch:
+
+```toml
+[[recipe]]
+name = "rust"
+[[recipe.command]]
+run   = "curl -LsSf https://sh.rustup.rs | sh -s -- -y --no-modify-path"
+check = "rustup --version"        # already satisfied? then do nothing
+```
+
+`check` is what makes `command` a resource rather than a script: a step with no
+way to ask "is this already done" cannot take part in `plan`, and `plan` is the
+whole contract. A recipe that cannot answer it is rejected at load time.
+
+No DSL. The moment a recipe wants a conditional, the question to ask is which
+provider is missing — the bash version's own history says the answer is usually
+"a provider", and only five times in 3,500 lines "a script".

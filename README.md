@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="assets/logo.svg" width="96" alt="kitbag">
+
 # kitbag
 
 **Everything this machine holds that is yours** — what it is, whose it is,
@@ -9,6 +11,10 @@ and how it gets onto the next machine.
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org)
 [![status](https://img.shields.io/badge/status-design-lightgrey.svg)](DESIGN.md)
+
+English · [한국어](README.ko.md)
+
+<img src="docs/demo.gif" width="860" alt="kitbag status">
 
 </div>
 

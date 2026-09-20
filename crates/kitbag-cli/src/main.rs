@@ -154,25 +154,70 @@ fn main() -> Result<()> {
     }
 
     // Until the engine exists, every command shows the shape of its answer
-    // rather than pretending to have one.
+    // rather than pretending to have one. The names are invented; the layout,
+    // the grouping and the marks are the real thing.
+    let row = |mark: Mark, name: &str, detail: &str| Row {
+        mark: Some(mark),
+        name: name.into(),
+        detail: detail.into(),
+    };
     let sample = vec![
         Group {
             scope: Scope::Personal,
             owner: None,
-            rows: vec![Row {
-                mark: Some(Mark::Unchanged),
-                name: "env:example".into(),
-                detail: "EXAMPLE_TOKEN EXAMPLE_URL".into(),
-            }],
+            rows: vec![
+                row(
+                    Mark::Unchanged,
+                    "env:notes",
+                    "NOTES_URL NOTES_DB NOTES_USER NOTES_PASSWORD",
+                ),
+                row(
+                    Mark::Unchanged,
+                    "ssh:id_ed25519",
+                    "SHA256:XhCQXT9l7zas… (ED25519)",
+                ),
+                row(
+                    Mark::New,
+                    "ssh:authorized_keys",
+                    "5 keys: laptop desktop mini server phone",
+                ),
+            ],
+        },
+        Group {
+            scope: Scope::Shared,
+            owner: Some("a friend".into()),
+            rows: vec![row(
+                Mark::Unchanged,
+                "env:llm-proxy",
+                "PROXY_URL PROXY_TOKEN MODEL",
+            )],
         },
         Group {
             scope: Scope::Work,
             owner: Some("acme".into()),
-            rows: vec![Row {
-                mark: Some(Mark::New),
-                name: "file:example".into(),
-                detail: "binary, 24 bytes → ~/.config/example".into(),
-            }],
+            rows: vec![
+                row(
+                    Mark::Changed,
+                    "env:ci",
+                    "CI_TOKEN CI_URL DEPLOY_KEY_ID REGISTRY_USER REGISTRY_PASSWORD +5 more",
+                ),
+                row(
+                    Mark::New,
+                    "file:cloud-keychain",
+                    "binary, 25788 bytes → ~/Library/Keychains/…",
+                ),
+            ],
+        },
+        Group {
+            scope: Scope::Mixed {
+                spans: vec!["personal".into(), "work".into()],
+            },
+            owner: None,
+            rows: vec![row(
+                Mark::Unknown,
+                "app:accounts",
+                "one bundle — personal, work",
+            )],
         },
     ];
 
