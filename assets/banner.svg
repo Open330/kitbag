@@ -1,24 +1,24 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 200" width="720" height="200" role="img" aria-label="kitbag — everything this machine holds that is yours">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 160" width="640" height="160" role="img" aria-label="kitbag — everything this machine holds that is yours">
   <title>kitbag</title>
   <style>
-    .name { font: 700 68px ui-sans-serif, -apple-system, "Segoe UI", Inter, system-ui, sans-serif; }
-    .tag  { font: 400 21px ui-sans-serif, -apple-system, "Segoe UI", Inter, system-ui, sans-serif; opacity: .72; }
-    :root, svg { color: #24292f; }
-    @media (prefers-color-scheme: dark) { svg { color: #e6edf3; } }
+    .body { fill: #16181d; }
+    .handle { stroke: #16181d; }
+    .part { fill: #6366f1; }
+    .name { fill: #16181d; font: 600 52px ui-sans-serif, -apple-system, "Segoe UI", Inter, system-ui, sans-serif; letter-spacing: -1.5px; }
+    .tag  { fill: #16181d; opacity: .62; font: 400 18px ui-sans-serif, -apple-system, "Segoe UI", Inter, system-ui, sans-serif; }
+    @media (prefers-color-scheme: dark) {
+      .body { fill: #e6edf3; } .handle { stroke: #e6edf3; } .part { fill: #818cf8; }
+      .name, .tag { fill: #e6edf3; }
+    }
   </style>
-  <g transform="translate(40 36) scale(0.98)" fill="currentColor">
-    <path d="M44 46V34a20 20 0 0 1 40 0v12" fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="round" opacity="0.85"/>
-    <path d="M12 46h104a8 8 0 0 1 8 8v46a12 12 0 0 1-12 12H16a12 12 0 0 1-12-12V54a8 8 0 0 1 8-8z" fill="currentColor" opacity="0.12"/>
-    <path d="M12 46h104a8 8 0 0 1 8 8v46a12 12 0 0 1-12 12H16a12 12 0 0 1-12-12V54a8 8 0 0 1 8-8z" fill="none" stroke="currentColor" stroke-width="7" stroke-linejoin="round"/>
-    <rect x="22" y="62" width="84" height="10" rx="5" fill="#3fb950"/>
-    <rect x="22" y="78" width="60" height="10" rx="5" fill="#a371f7"/>
-    <rect x="22" y="94" width="72" height="10" rx="5" fill="#d29922"/>
+  <g transform="translate(44 44) scale(1.15)">
+    <path class="handle" d="M23.5 23v-3.5a8.5 8.5 0 0 1 17 0V23" fill="none" stroke-width="3.6" stroke-linecap="round"/>
+    <mask id="kb"><rect x="6" y="23" width="52" height="34" rx="10" fill="#fff"/><rect x="43" y="23" width="2.6" height="34" fill="#000"/></mask>
+    <g mask="url(#kb)">
+      <rect class="body" x="6" y="23" width="52" height="34" rx="10"/>
+      <rect class="part" x="45.6" y="23" width="12.4" height="34"/>
+    </g>
   </g>
-  <text class="name" x="196" y="96" fill="currentColor">kitbag</text>
-  <text class="tag" x="199" y="132" fill="currentColor">Everything this machine holds that is yours</text>
-  <g transform="translate(199 150)" class="tag">
-    <text x="0" y="14" fill="#3fb950">● personal</text>
-    <text x="104" y="14" fill="#a371f7">● shared</text>
-    <text x="196" y="14" fill="#d29922">● work</text>
-  </g>
+  <text class="name" x="132" y="84">kitbag</text>
+  <text class="tag" x="134" y="112">Everything this machine holds that is yours</text>
 </svg>

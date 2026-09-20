@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="kitbag">
+  <title>kitbag</title>
+  <path d="M23.5 23v-3.5a8.5 8.5 0 0 1 17 0V23" fill="none" stroke="currentColor" stroke-width="3.6" stroke-linecap="round"/>
+  <mask id="km">
+    <rect x="6" y="23" width="52" height="34" rx="10" fill="#fff"/>
+    <rect x="43" y="23" width="2.6" height="34" fill="#000"/>
+  </mask>
+  <g mask="url(#km)">
+    <rect x="6" y="23" width="52" height="34" rx="10" fill="currentColor"/>
+    <rect x="45.6" y="23" width="12.4" height="34" fill="currentColor" opacity="0.55"/>
+  </g>
+</svg>

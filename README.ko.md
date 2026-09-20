@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/logo.svg" width="96" alt="kitbag">
+<img src="assets/logo.svg" width="88" alt="kitbag">
 
 # kitbag
 
