@@ -1,0 +1,17 @@
+[workspace]
+members = ["crates/kitbag-core", "crates/kitbag-vault", "crates/kitbag-cli"]
+resolver = "2"
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT"
+repository = "https://github.com/jiunbae/kitbag"
+description = "Everything this machine holds that is yours: what it is, whose it is, and how it gets onto the next machine"
+
+[workspace.dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"

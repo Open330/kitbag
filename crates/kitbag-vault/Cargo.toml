@@ -1,0 +1,12 @@
+[package]
+name = "kitbag-vault"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Secret store backends for kitbag"
+
+[dependencies]
+anyhow.workspace = true
+kitbag-core = { path = "../kitbag-core" }

@@ -1,0 +1,18 @@
+[package]
+name = "kitbag-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Everything this machine holds that is yours"
+
+[[bin]]
+name = "kitbag"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap = { version = "4", features = ["derive"] }
+kitbag-core = { path = "../kitbag-core" }
+kitbag-vault = { path = "../kitbag-vault" }

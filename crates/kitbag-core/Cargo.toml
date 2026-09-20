@@ -1,0 +1,12 @@
+[package]
+name = "kitbag-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Model and engine for kitbag"
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
