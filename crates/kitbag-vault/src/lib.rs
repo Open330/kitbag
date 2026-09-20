@@ -46,9 +46,12 @@ pub struct Capabilities {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Listing {
     pub name: String,
-    /// Present when the backend can report it cheaply; otherwise kitbag reads
-    /// the envelope. Either way an unchanged item is never rewritten.
+    /// The payload alone, for comparing against a file on disk. Present when
+    /// the backend can report it cheaply; otherwise kitbag reads the envelope.
     pub payload_hash: Option<String>,
+    /// The payload and every header over it, for deciding whether a push has
+    /// anything to say. A marker that changed moves this and not the other.
+    pub fingerprint: Option<String>,
     /// Whose it is, when the store can say without being asked for the value.
     /// A restore takes only the scopes a machine asked for, and deciding that
     /// from the listing is the difference between fetching everything to find
@@ -161,6 +164,7 @@ impl Backend for MemoryBackend {
                 Listing {
                     name: name.clone(),
                     payload_hash: parsed.as_ref().map(|e| e.sha256()),
+                    fingerprint: parsed.as_ref().map(|e| e.fingerprint()),
                     platform: parsed.as_ref().map(|e| e.platform.clone()),
                     scope: parsed.map(|e| e.scope),
                 }

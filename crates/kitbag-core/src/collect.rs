@@ -61,6 +61,23 @@ impl Item {
     }
 }
 
+/// The envelope a push sends for an item.
+///
+/// One place, so that what is compared against the store and what is written
+/// to it cannot describe the item differently — which is how a change to a
+/// marker ends up invisible.
+pub fn envelope_for(item: &Item, home: &Path) -> crate::Envelope {
+    crate::Envelope::new(item.scope.clone(), item.payload.clone())
+        .with_owner(item.owner.clone())
+        .with_platform(item.platform.clone())
+        .with_path(match &item.source {
+            // State an application owns has no path: it goes back the way it
+            // came out, through the app.
+            Source::Command { .. } => None,
+            Source::File(path) => Some(crate::config::shorten(path, home)),
+        })
+}
+
 /// Why something on disk was passed over.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Skipped {

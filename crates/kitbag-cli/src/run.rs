@@ -8,7 +8,6 @@ use kitbag_catalog::{scan, Finding, Source};
 use kitbag_core::collect::{collect, Collected};
 use kitbag_core::recipe::Recipes;
 use kitbag_core::state::{compare, orphans, Remote, State};
-use kitbag_core::Envelope;
 use kitbag_core::{Config, Scope, Wanted};
 use kitbag_providers::{apply_recipe, plan_recipe, Action, Done, PackageManager, Step};
 use kitbag_vault::{Backend, BackendKind};
@@ -63,7 +62,7 @@ pub fn status(
             store
                 .list()?
                 .into_iter()
-                .map(|l| (l.name, l.payload_hash))
+                .map(|l| (l.name, l.fingerprint))
                 .collect()
         }
     };
@@ -77,7 +76,7 @@ pub fn status(
             held_back += 1;
             continue;
         }
-        let mark = compared.then(|| mark_of(compare(item, &remote)));
+        let mark = compared.then(|| mark_of(compare(item, &remote, &home)));
         groups
             .entry((item.scope.name().to_string(), item.owner.clone()))
             .or_default()
@@ -97,7 +96,7 @@ pub fn status(
                 "path": pretty(&i.path, &home),
                 "detail": i.detail(),
                 "taken": wanted.accepts(&i.scope),
-                "state": compared.then(|| match compare(i, &remote) {
+                "state": compared.then(|| match compare(i, &remote, &home) {
                     State::New => "new",
                     State::Changed => "changed",
                     State::Unchanged => "unchanged",
@@ -422,7 +421,7 @@ pub fn push(
     let remote: Remote = store
         .list()?
         .into_iter()
-        .map(|l| (l.name, l.payload_hash))
+        .map(|l| (l.name, l.fingerprint))
         .collect();
     let total = items.iter().filter(|i| wanted.accepts(&i.scope)).count();
     let mut at = 0usize;
@@ -441,7 +440,7 @@ pub fn push(
         }
         at += 1;
         progress.say(format!("{} — {at}/{total}", item.name));
-        match compare(item, &remote) {
+        match compare(item, &remote, &home) {
             State::Unchanged => {
                 same += 1;
                 continue;
@@ -451,15 +450,7 @@ pub fn push(
                     progress.clear();
                     println!("  {} {:<28} would be sent", state.glyph(), item.name);
                 } else {
-                    let envelope = Envelope::new(item.scope.clone(), item.payload.clone())
-                        .with_owner(item.owner.clone())
-                        .with_platform(item.platform.clone())
-                        .with_path(match &item.source {
-                            kitbag_core::collect::Source::File(path) => Some(pretty(path, &home)),
-                            // State an application owns has no path: it goes
-                            // back the way it came out, through the app.
-                            kitbag_core::collect::Source::Command { .. } => None,
-                        });
+                    let envelope = kitbag_core::collect::envelope_for(item, &home);
                     let outcome = store.put(&item.name, &envelope);
                     progress.clear();
                     match outcome {

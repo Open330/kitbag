@@ -200,9 +200,18 @@ impl Backend for Bw {
             all.iter()
                 .filter_map(|item| {
                     let name = item.get("name")?.as_str()?.to_string();
+                    let notes = item.get("notes").and_then(|n| n.as_str()).unwrap_or("");
                     Some(Listing {
                         name,
                         payload_hash: field(item, "hash"),
+                        // An inline note is exactly the envelope text, so its
+                        // fingerprint is free. A payload that went to an
+                        // attachment leaves the field behind instead.
+                        fingerprint: if stored_elsewhere(notes) || notes.is_empty() {
+                            field(item, "fingerprint")
+                        } else {
+                            Some(kitbag_core::payload_hash(notes.as_bytes()))
+                        },
                         // Written by `put` as a courtesy to whoever opens the
                         // vault in a browser; it costs nothing to read back,
                         // and the envelope stays the authority if they differ.
@@ -359,6 +368,7 @@ fn item_body(name: &str, envelope: &Envelope, folder: &str, inline: bool) -> ser
         { "name": "owner", "value": envelope.owner.clone().unwrap_or_default(), "type": 0 },
         { "name": "hash", "value": envelope.sha256(), "type": 0 },
         { "name": "platform", "value": envelope.platform.join(", "), "type": 0 },
+        { "name": "fingerprint", "value": envelope.fingerprint(), "type": 0 },
     ]);
 
     serde_json::json!({

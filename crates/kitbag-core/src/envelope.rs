@@ -120,6 +120,18 @@ impl Envelope {
         self.platform.is_empty() || self.platform.iter().any(|p| p == platform)
     }
 
+    /// Everything the store is asked to hold, in one hash: the payload and
+    /// every header over it.
+    ///
+    /// [`Self::sha256`] covers the payload alone, which is what a restore
+    /// compares against a file on disk. It is the wrong question for a push:
+    /// changing a file's scope marker, its owner, or the platforms it belongs
+    /// on leaves the payload untouched, and a push that compares payloads
+    /// reports "already there" and leaves the store holding the old answer.
+    pub fn fingerprint(&self) -> String {
+        payload_hash(self.to_text().as_bytes())
+    }
+
     pub fn to_text(&self) -> String {
         let utf8 = std::str::from_utf8(&self.payload).ok();
         let (encoding, body) = match utf8 {

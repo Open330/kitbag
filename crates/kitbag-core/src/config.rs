@@ -150,6 +150,15 @@ pub fn expand(pattern: &str, home: &Path) -> String {
 /// These are conventions, not rules: `~/.envs/github.env` is `env:github`
 /// because that reads better in a report than `file:envs-github.env`. A track
 /// entry can always name an item itself.
+/// The inverse of [`expand`]: how a path is written down so another machine
+/// can place it.
+pub fn shorten(path: &std::path::Path, home: &std::path::Path) -> String {
+    match path.strip_prefix(home) {
+        Ok(rest) => format!("~/{}", rest.display()),
+        Err(_) => path.display().to_string(),
+    }
+}
+
 pub fn derive_name(path: &Path, home: &Path) -> String {
     let rel = path.strip_prefix(home).unwrap_or(path);
     let rel_str = rel.to_string_lossy();

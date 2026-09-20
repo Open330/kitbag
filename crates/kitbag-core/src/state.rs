@@ -7,7 +7,6 @@
 use std::collections::HashMap;
 
 use crate::collect::Item;
-use crate::envelope::Envelope;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum State {
@@ -35,12 +34,15 @@ impl State {
     }
 }
 
-/// What the store reports: item name to payload hash. A `None` hash means the
-/// store holds the item but cannot say cheaply what is in it.
+/// What the store reports: item name to the fingerprint of what it holds. A
+/// `None` means the store has the item but cannot say cheaply what is in it.
 pub type Remote = HashMap<String, Option<String>>;
 
-pub fn compare(item: &Item, remote: &Remote) -> State {
-    let here = Envelope::new(item.scope.clone(), item.payload.clone()).sha256();
+pub fn compare(item: &Item, remote: &Remote, home: &std::path::Path) -> State {
+    // The whole envelope, not the payload: a scope marker that changed, or a
+    // platform tag that was added, leaves the bytes alone and still has to
+    // reach the store.
+    let here = crate::collect::envelope_for(item, home).fingerprint();
     match remote.get(&item.name) {
         None => State::New,
         Some(None) => State::Unknown,
@@ -69,6 +71,10 @@ pub fn orphans<'a>(items: &[Item], remote: &'a Remote) -> Vec<&'a String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn compare_here(item: &Item, remote: &Remote) -> State {
+        compare(item, remote, &home())
+    }
     use crate::scope::Scope;
     use std::path::PathBuf;
 
@@ -85,31 +91,39 @@ mod tests {
         }
     }
 
+    fn home() -> PathBuf {
+        PathBuf::from("/")
+    }
+
+    /// What the store would report for an item this machine holds.
     fn hash(body: &str) -> String {
-        Envelope::new(Scope::Personal, body.as_bytes().to_vec()).sha256()
+        crate::collect::envelope_for(&item("ignored", body), &home()).fingerprint()
     }
 
     #[test]
     fn a_name_the_store_has_never_seen_is_new() {
-        assert_eq!(compare(&item("env:a", "x"), &Remote::new()), State::New);
+        assert_eq!(
+            compare_here(&item("env:a", "x"), &Remote::new()),
+            State::New
+        );
     }
 
     #[test]
     fn the_same_bytes_are_unchanged() {
         let remote = Remote::from([("env:a".to_string(), Some(hash("x")))]);
-        assert_eq!(compare(&item("env:a", "x"), &remote), State::Unchanged);
+        assert_eq!(compare_here(&item("env:a", "x"), &remote), State::Unchanged);
     }
 
     #[test]
     fn different_bytes_are_changed() {
         let remote = Remote::from([("env:a".to_string(), Some(hash("x")))]);
-        assert_eq!(compare(&item("env:a", "y"), &remote), State::Changed);
+        assert_eq!(compare_here(&item("env:a", "y"), &remote), State::Changed);
     }
 
     #[test]
     fn a_store_that_cannot_say_leaves_it_unknown() {
         let remote = Remote::from([("env:a".to_string(), None)]);
-        assert_eq!(compare(&item("env:a", "x"), &remote), State::Unknown);
+        assert_eq!(compare_here(&item("env:a", "x"), &remote), State::Unknown);
     }
 
     #[test]
@@ -128,7 +142,7 @@ mod tests {
         let mut volatile = item("app:tokens", "built at 09:00");
         volatile.volatile = true;
         let remote = Remote::from([("app:tokens".to_string(), Some(hash("built at 08:59")))]);
-        assert_eq!(compare(&volatile, &remote), State::Unknown);
+        assert_eq!(compare_here(&volatile, &remote), State::Unknown);
     }
 
     #[test]
@@ -137,23 +151,53 @@ mod tests {
         // there is no doubt: it has never been sent.
         let mut volatile = item("app:tokens", "x");
         volatile.volatile = true;
-        assert_eq!(compare(&volatile, &Remote::new()), State::New);
+        assert_eq!(compare_here(&volatile, &Remote::new()), State::New);
     }
 
     #[test]
     fn a_stable_item_is_still_compared_normally() {
         let remote = Remote::from([("env:a".to_string(), Some(hash("x")))]);
-        assert_eq!(compare(&item("env:a", "x"), &remote), State::Unchanged);
-        assert_eq!(compare(&item("env:a", "y"), &remote), State::Changed);
+        assert_eq!(compare_here(&item("env:a", "x"), &remote), State::Unchanged);
+        assert_eq!(compare_here(&item("env:a", "y"), &remote), State::Changed);
     }
 
     #[test]
-    fn the_scope_is_part_of_what_is_compared_only_through_the_payload() {
-        // Two items with the same bytes hash the same whatever their scope:
-        // a scope change moves an item, it does not rewrite its contents.
+    fn a_marker_that_changed_is_a_change() {
+        // This test used to assert the opposite, on the reasoning that a scope
+        // change moves an item rather than rewriting its contents. The store
+        // holds the scope too, and a push that will not notice leaves it
+        // holding the old one: another machine then restores the item into the
+        // wrong life and nothing ever says so.
         let mut work = item("env:a", "x");
         work.scope = Scope::Work;
         let remote = Remote::from([("env:a".to_string(), Some(hash("x")))]);
-        assert_eq!(compare(&work, &remote), State::Unchanged);
+        assert_eq!(compare_here(&work, &remote), State::Changed);
+    }
+
+    #[test]
+    fn a_platform_tag_that_was_added_is_a_change() {
+        // Found the hard way: four items were tagged `macos` and a push said
+        // "38 already there", because it was comparing payloads and the
+        // payloads had not moved.
+        let mut tagged = item("app:x", "x");
+        tagged.platform = vec!["macos".to_string()];
+        let remote = Remote::from([("app:x".to_string(), Some(hash("x")))]);
+        assert_eq!(compare_here(&tagged, &remote), State::Changed);
+    }
+
+    #[test]
+    fn an_owner_that_changed_is_a_change() {
+        let mut owned = item("env:a", "x");
+        owned.owner = Some("acme".to_string());
+        let remote = Remote::from([("env:a".to_string(), Some(hash("x")))]);
+        assert_eq!(compare_here(&owned, &remote), State::Changed);
+    }
+
+    #[test]
+    fn nothing_moving_is_still_nothing_to_send() {
+        // The point of all of the above is not to make everything look
+        // changed.
+        let remote = Remote::from([("env:a".to_string(), Some(hash("x")))]);
+        assert_eq!(compare_here(&item("env:a", "x"), &remote), State::Unchanged);
     }
 }
