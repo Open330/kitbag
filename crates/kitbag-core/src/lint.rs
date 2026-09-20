@@ -42,11 +42,13 @@ const PREFIXES: &[(&str, &str)] = &[
     ("hf_", "Hugging Face token"),
 ];
 
+/// The rule set has to name what it looks for, which makes this file look like
+/// the thing it is guarding against. `lint:allow` is how a line says so.
 const BLOCKS: &[(&str, &str)] = &[
-    ("BEGIN OPENSSH PRIVATE KEY", "private key"),
-    ("BEGIN RSA PRIVATE KEY", "private key"),
-    ("BEGIN PGP PRIVATE KEY BLOCK", "private key"),
-    ("BEGIN EC PRIVATE KEY", "private key"),
+    ("BEGIN OPENSSH PRIVATE KEY", "private key"), // lint:allow
+    ("BEGIN RSA PRIVATE KEY", "private key"),     // lint:allow
+    ("BEGIN PGP PRIVATE KEY BLOCK", "private key"), // lint:allow
+    ("BEGIN EC PRIVATE KEY", "private key"),      // lint:allow
 ];
 
 /// Absolute paths that only exist on one person's machine. They leak a
@@ -218,13 +220,13 @@ mod tests {
 
     #[test]
     fn catches_a_private_key_header() {
-        let f = check("-----BEGIN OPENSSH PRIVATE KEY-----");
+        let f = check("-----BEGIN OPENSSH PRIVATE KEY-----"); // lint:allow
         assert_eq!(f[0].rule, "private-key");
     }
 
     #[test]
     fn catches_a_path_from_somebody_machine() {
-        let f = check("source /Users/june/.envs/work.env");
+        let f = check("source /Users/alice/.envs/work.env"); // lint:allow
         assert_eq!(f[0].rule, "personal-path");
         // and does not object to the paths CI and documentation really use
         assert!(check("/home/runner/work/kitbag").is_empty());

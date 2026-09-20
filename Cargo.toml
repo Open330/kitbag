@@ -7,7 +7,7 @@ version = "0.0.1"
 edition = "2021"
 rust-version = "1.85"
 license = "MIT"
-repository = "https://github.com/jiunbae/kitbag"
+repository = "https://github.com/Open330/kitbag"
 description = "Everything this machine holds that is yours: what it is, whose it is, and how it gets onto the next machine"
 
 [workspace.dependencies]
