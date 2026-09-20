@@ -7,9 +7,10 @@ use anyhow::{Context, Result};
 use kitbag_core::collect::{collect, Collected};
 use kitbag_core::recipe::Recipes;
 use kitbag_core::state::{compare, orphans, Remote, State};
+use kitbag_core::Envelope;
 use kitbag_core::{Config, Scope, Wanted};
 use kitbag_providers::{apply_recipe, plan_recipe, Action, Done, PackageManager, Step};
-use kitbag_vault::BackendKind;
+use kitbag_vault::{Backend, BackendKind};
 
 use crate::ui::{self, Colour, Group, Mark, Row};
 
@@ -345,4 +346,222 @@ fn confirm(pending: usize) -> Result<bool> {
     let mut answer = String::new();
     std::io::stdin().read_line(&mut answer)?;
     Ok(matches!(answer.trim(), "y" | "Y" | "yes"))
+}
+
+fn open_store(name: Option<&str>) -> Result<Box<dyn Backend>> {
+    let name = name.unwrap_or("bw");
+    let kind: BackendKind = name.parse()?;
+    kind.open()
+        .with_context(|| format!("opening the {name} store"))
+}
+
+/// Send what this machine holds to the store.
+///
+/// An item the store already holds byte for byte is not sent: comparing by
+/// hash means a machine with nothing to say costs one listing, and a vault
+/// does not fill up with versions of a file that never changed.
+pub fn push(backend: Option<&str>, wanted: Option<Wanted>, dry_run: bool) -> Result<()> {
+    let home = home();
+    let config = Config::load_or_default(&config_path())?;
+    let wanted = wanted.unwrap_or_else(|| config.wanted());
+    let Collected { items, skipped } = collect(&config, &home);
+
+    let store = open_store(backend)?;
+    let remote: Remote = store
+        .list()?
+        .into_iter()
+        .map(|l| (l.name, l.payload_hash))
+        .collect();
+
+    let mut sent = 0usize;
+    let mut same = 0usize;
+    println!();
+    for item in &items {
+        if !wanted.accepts(&item.scope) {
+            continue;
+        }
+        match compare(item, &remote) {
+            State::Unchanged => {
+                same += 1;
+                continue;
+            }
+            state => {
+                if dry_run {
+                    println!("  {} {:<28} would be sent", state.glyph(), item.name);
+                } else {
+                    let envelope = Envelope::new(item.scope.clone(), item.payload.clone())
+                        .with_owner(item.owner.clone());
+                    store
+                        .put(&item.name, &envelope)
+                        .with_context(|| format!("sending {}", item.name))?;
+                    println!("  {} {:<28} sent", state.glyph(), item.name);
+                }
+                sent += 1;
+            }
+        }
+    }
+
+    println!();
+    if dry_run {
+        println!("  {sent} to send, {same} already there. Nothing was written.");
+    } else {
+        println!("  {sent} sent, {same} already there.");
+    }
+    if !skipped.is_empty() {
+        println!(
+            "  {} not tracked — `kitbag status` says why.",
+            skipped.len()
+        );
+    }
+    Ok(())
+}
+
+/// Write what the store holds back onto this machine.
+///
+/// Only the scopes this machine takes, and every file it would overwrite is
+/// kept first: a restore that quietly replaces something is the one operation
+/// here nobody can undo.
+pub fn restore(backend: Option<&str>, wanted: Option<Wanted>, dry_run: bool) -> Result<()> {
+    let home = home();
+    let config = Config::load_or_default(&config_path())?;
+    let wanted = wanted.unwrap_or_else(|| config.wanted());
+    let Collected { items, .. } = collect(&config, &home);
+
+    // Where each name belongs, learnt from what this machine already tracks.
+    let known: BTreeMap<&str, &Path> = items
+        .iter()
+        .map(|i| (i.name.as_str(), i.path.as_path()))
+        .collect();
+
+    let store = open_store(backend)?;
+    let mut written = 0usize;
+    let mut same = 0usize;
+    let mut unplaceable = Vec::new();
+
+    println!();
+    for listing in store.list()? {
+        let envelope = store.get(&listing.name)?;
+        if !wanted.accepts(&envelope.scope) {
+            continue;
+        }
+        let Some(dest) = known.get(listing.name.as_str()) else {
+            // The store knows an item this machine has never tracked, so there
+            // is nowhere to put it without guessing at a path.
+            unplaceable.push(listing.name.clone());
+            continue;
+        };
+
+        if std::fs::read(dest)
+            .map(|b| b == envelope.payload)
+            .unwrap_or(false)
+        {
+            same += 1;
+            continue;
+        }
+        if dry_run {
+            println!(
+                "  ~ {:<28} would be written to {}",
+                listing.name,
+                pretty(dest, &home)
+            );
+            written += 1;
+            continue;
+        }
+
+        let kept = place(dest, &envelope.payload)
+            .with_context(|| format!("writing {}", pretty(dest, &home)))?;
+        match kept {
+            Some(backup) => println!(
+                "  ~ {:<28} {} — kept the old one at {}",
+                listing.name,
+                pretty(dest, &home),
+                pretty(&backup, &home)
+            ),
+            None => println!("  + {:<28} {}", listing.name, pretty(dest, &home)),
+        }
+        written += 1;
+    }
+
+    println!();
+    if dry_run {
+        println!("  {written} to write, {same} already here. Nothing was written.");
+    } else {
+        println!("  {written} written, {same} already here.");
+    }
+    if !unplaceable.is_empty() {
+        println!();
+        println!("  in the store, but this machine does not track them, so there is nowhere to put them:");
+        for name in &unplaceable {
+            println!("  · {name}");
+        }
+        println!("  add a [[track]] entry for each, then restore again.");
+    }
+    Ok(())
+}
+
+/// Write a payload where it belongs, keeping whatever was there.
+///
+/// Returns where the old file went, if there was one. A restore is the one
+/// operation here that cannot be undone by running it again, so nothing it
+/// replaces is thrown away - and what it writes is readable by its owner and
+/// nobody else, because most of what comes back through here is a secret.
+fn place(dest: &Path, payload: &[u8]) -> Result<Option<PathBuf>> {
+    use std::os::unix::fs::PermissionsExt;
+
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let kept = if dest.exists() {
+        let backup = backup_beside(dest);
+        std::fs::rename(dest, &backup)?;
+        Some(backup)
+    } else {
+        None
+    };
+    std::fs::write(dest, payload)?;
+    std::fs::set_permissions(dest, std::fs::Permissions::from_mode(0o600))?;
+    Ok(kept)
+}
+
+fn backup_beside(path: &Path) -> PathBuf {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let mut name = path.as_os_str().to_os_string();
+    name.push(format!(".backup.{stamp}"));
+    PathBuf::from(name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn a_restored_secret_is_readable_by_its_owner_and_nobody_else() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("deep/.envs/a.env");
+
+        let kept = place(&dest, b"TOKEN=x\n").unwrap();
+
+        assert_eq!(kept, None, "there was nothing to keep");
+        assert_eq!(std::fs::read(&dest).unwrap(), b"TOKEN=x\n");
+        let mode = std::fs::metadata(&dest).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600, "mode was {:o}", mode & 0o777);
+    }
+
+    #[test]
+    fn what_was_there_is_kept_never_overwritten_in_place() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("a.env");
+        std::fs::write(&dest, b"the one that was here\n").unwrap();
+
+        let kept = place(&dest, b"the one from the store\n")
+            .unwrap()
+            .expect("a backup");
+
+        assert_eq!(std::fs::read(&kept).unwrap(), b"the one that was here\n");
+        assert_eq!(std::fs::read(&dest).unwrap(), b"the one from the store\n");
+    }
 }

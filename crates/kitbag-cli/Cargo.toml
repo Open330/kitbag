@@ -18,3 +18,6 @@ clap_complete = "4"
 kitbag-core = { path = "../kitbag-core" }
 kitbag-providers = { path = "../kitbag-providers" }
 kitbag-vault = { path = "../kitbag-vault" }
+
+[dev-dependencies]
+tempfile = "3"

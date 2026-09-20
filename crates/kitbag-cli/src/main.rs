@@ -167,6 +167,8 @@ fn main() -> Result<()> {
         Command::Apply { ref only, yes } => {
             run::apply(&repo_root(), only.as_deref(), yes, colour, width)?
         }
+        Command::Push { dry_run } => run::push(cli.backend.as_deref(), wanted, dry_run)?,
+        Command::Restore { dry_run } => run::restore(cli.backend.as_deref(), wanted, dry_run)?,
         other => {
             println!("  kitbag {} is not implemented yet.", name_of(&other));
             println!("  Implemented so far: status, plan, completions.");
