@@ -267,8 +267,7 @@ fn utc_stamp(t: SystemTime) -> String {
 
 fn last_line(s: &str) -> String {
     s.lines()
-        .filter(|l| !l.trim().is_empty())
-        .next_back()
+        .rfind(|l| !l.trim().is_empty())
         .unwrap_or("no output")
         .trim()
         .to_string()
