@@ -9,10 +9,14 @@
 //! Nothing in here writes. `apply` is a separate step that takes a plan, and a
 //! plan it could not compute is not one it may execute.
 
+pub mod apply;
+
 use std::path::Path;
 use std::process::Command as Proc;
 
 use kitbag_core::recipe::{Command, DefaultsKey, Link, Recipe};
+
+pub use apply::{apply_recipe, Applied, Done};
 
 /// What applying this resource would do.
 #[derive(Debug, Clone, PartialEq, Eq)]

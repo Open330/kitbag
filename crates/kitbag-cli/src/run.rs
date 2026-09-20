@@ -8,7 +8,7 @@ use kitbag_core::collect::{collect, Collected};
 use kitbag_core::recipe::Recipes;
 use kitbag_core::state::{compare, orphans, Remote, State};
 use kitbag_core::{Config, Scope, Wanted};
-use kitbag_providers::{plan_recipe, Action, PackageManager, Step};
+use kitbag_providers::{apply_recipe, plan_recipe, Action, Done, PackageManager, Step};
 use kitbag_vault::BackendKind;
 
 use crate::ui::{self, Colour, Group, Mark, Row};
@@ -219,4 +219,130 @@ fn pretty(path: &Path, home: &Path) -> String {
         Ok(rest) => format!("~/{}", rest.display()),
         Err(_) => path.display().to_string(),
     }
+}
+
+/// Make the machine match the recipes.
+///
+/// The plan is shown first and confirmed, because `apply` is the only command
+/// here that writes: a person should see what is about to happen to their
+/// machine while it is still about to happen. `--yes` skips the question, and
+/// a run with nowhere to ask insists on it rather than assuming consent.
+pub fn apply(
+    repo: &Path,
+    only: Option<&str>,
+    yes: bool,
+    colour: Colour,
+    width: usize,
+) -> Result<()> {
+    let home = home();
+    let recipes_path = repo.join("kitbag.toml");
+    let recipes = Recipes::load(&recipes_path)
+        .with_context(|| format!("reading {}", recipes_path.display()))?;
+
+    let platform = if cfg!(target_os = "macos") {
+        "macos"
+    } else {
+        "linux"
+    };
+    let manager = PackageManager::detect();
+    let with_defaults = cfg!(target_os = "macos");
+
+    let chosen: Vec<_> = recipes
+        .recipes
+        .iter()
+        .filter(|r| r.applies_here(platform))
+        .filter(|r| only.is_none_or(|name| r.name == name))
+        .collect();
+
+    if chosen.is_empty() {
+        println!();
+        println!("  Nothing to apply: no recipe here matches.");
+        return Ok(());
+    }
+
+    // What would change, before anything does.
+    let mut pending = 0usize;
+    let mut preview: Vec<Group> = Vec::new();
+    for recipe in &chosen {
+        let steps: Vec<Step> = plan_recipe(recipe, &home, repo, manager.as_ref(), with_defaults);
+        pending += steps.iter().filter(|s| s.action.is_change()).count();
+        preview.push(Group {
+            scope: Scope::Personal,
+            owner: Some(recipe.name.clone()),
+            rows: steps
+                .into_iter()
+                .map(|s| Row {
+                    mark: Some(mark_of_action(&s.action)),
+                    detail: s.action.says().to_string(),
+                    name: s.id,
+                })
+                .collect(),
+        });
+    }
+    print!("{}", ui::render(&preview, colour, width));
+
+    if pending == 0 {
+        println!();
+        println!("  Nothing to do — the machine already matches.");
+        return Ok(());
+    }
+
+    if !yes && !confirm(pending)? {
+        println!("  Left alone.");
+        return Ok(());
+    }
+
+    println!();
+    let mut changed = 0usize;
+    let mut problems = 0usize;
+    for recipe in &chosen {
+        for applied in apply_recipe(recipe, &home, repo, manager.as_ref(), with_defaults) {
+            if applied.done == Done::Skipped {
+                continue;
+            }
+            if applied.done.changed() {
+                changed += 1;
+            }
+            if applied.done.is_problem() {
+                problems += 1;
+            }
+            println!(
+                "  {} {:<28} {}",
+                applied.done.glyph(),
+                applied.id,
+                applied.done.says()
+            );
+        }
+    }
+
+    println!();
+    println!("  {changed} change(s) made.");
+    if problems > 0 {
+        println!("  {problems} could not be done — each says why above.");
+    }
+    Ok(())
+}
+
+fn mark_of_action(action: &Action) -> Mark {
+    match action {
+        Action::None => Mark::Unchanged,
+        Action::Create(_) => Mark::New,
+        Action::Replace(_) => Mark::Changed,
+        Action::Unknown(_) => Mark::Unknown,
+    }
+}
+
+fn confirm(pending: usize) -> Result<bool> {
+    use std::io::{IsTerminal, Write};
+
+    if !std::io::stdin().is_terminal() {
+        println!();
+        println!("  {pending} change(s) to make, and no terminal to ask in. Re-run with --yes.");
+        return Ok(false);
+    }
+    print!("\n  Apply {pending} change(s)? [y/N] ");
+    std::io::stdout().flush()?;
+    let mut answer = String::new();
+    std::io::stdin().read_line(&mut answer)?;
+    Ok(matches!(answer.trim(), "y" | "Y" | "yes"))
 }

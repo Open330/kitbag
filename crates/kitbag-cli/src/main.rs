@@ -84,9 +84,12 @@ enum Command {
 
     /// Make the machine match the recipes
     Apply {
-        /// Only this kind of resource: pkg, file, defaults, secret
-        #[arg(long, value_name = "KIND")]
+        /// Only this recipe
+        #[arg(long, value_name = "RECIPE")]
         only: Option<String>,
+        /// Do not ask first
+        #[arg(long, short)]
+        yes: bool,
     },
 
     /// Find personal state that nothing is tracking yet
@@ -161,6 +164,9 @@ fn main() -> Result<()> {
     match cli.command {
         Command::Status => run::status(cli.backend.as_deref(), wanted, colour, width)?,
         Command::Plan => run::plan(&repo_root(), colour, width)?,
+        Command::Apply { ref only, yes } => {
+            run::apply(&repo_root(), only.as_deref(), yes, colour, width)?
+        }
         other => {
             println!("  kitbag {} is not implemented yet.", name_of(&other));
             println!("  Implemented so far: status, plan, completions.");
