@@ -42,6 +42,7 @@ pub fn status(
     wanted: Option<Wanted>,
     colour: Colour,
     width: usize,
+    json: bool,
 ) -> Result<()> {
     let home = home();
     let cfg_path = config_path();
@@ -85,6 +86,32 @@ pub fn status(
                 name: item.name.clone(),
                 detail: item.detail(),
             });
+    }
+
+    if json {
+        let out = serde_json::json!({
+            "items": items.iter().map(|i| serde_json::json!({
+                "name": i.name,
+                "scope": i.scope.name(),
+                "owner": i.owner,
+                "path": pretty(&i.path, &home),
+                "detail": i.detail(),
+                "taken": wanted.accepts(&i.scope),
+                "state": compared.then(|| match compare(i, &remote) {
+                    State::New => "new",
+                    State::Changed => "changed",
+                    State::Unchanged => "unchanged",
+                    State::Unknown => "unknown",
+                }),
+            })).collect::<Vec<_>>(),
+            "skipped": skipped.iter().map(|s| serde_json::json!({
+                "path": pretty(&s.path, &home),
+                "why": s.reason.says(),
+            })).collect::<Vec<_>>(),
+            "orphans": compared.then(|| orphans(&items, &remote)),
+        });
+        println!("{}", serde_json::to_string_pretty(&out)?);
+        return Ok(());
     }
 
     if items.is_empty() && skipped.is_empty() {
@@ -138,7 +165,7 @@ pub fn status(
 }
 
 /// What `apply` would change. Reads the machine, writes nothing.
-pub fn plan(repo: &Path, colour: Colour, width: usize) -> Result<()> {
+pub fn plan(repo: &Path, colour: Colour, width: usize, json: bool) -> Result<()> {
     let home = home();
     let recipes_path = repo.join("kitbag.toml");
     let recipes = Recipes::load(&recipes_path)
@@ -153,6 +180,7 @@ pub fn plan(repo: &Path, colour: Colour, width: usize) -> Result<()> {
 
     let mut groups: Vec<Group> = Vec::new();
     let mut changes = 0usize;
+    let mut as_json: Vec<serde_json::Value> = Vec::new();
 
     for recipe in &recipes.recipes {
         if !recipe.applies_here(platform) {
@@ -169,6 +197,15 @@ pub fn plan(repo: &Path, colour: Colour, width: usize) -> Result<()> {
             continue;
         }
         changes += steps.iter().filter(|s| s.action.is_change()).count();
+        as_json.extend(steps.iter().map(|s| {
+            serde_json::json!({
+                "recipe": s.recipe,
+                "id": s.id,
+                "action": s.action.glyph().to_string(),
+                "says": s.action.says(),
+                "changes": s.action.is_change(),
+            })
+        }));
 
         groups.push(Group {
             // Recipes are not scoped by owner yet; the grouping shows the
@@ -193,6 +230,11 @@ pub fn plan(repo: &Path, colour: Colour, width: usize) -> Result<()> {
                 })
                 .collect(),
         });
+    }
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&as_json)?);
+        return Ok(());
     }
 
     if groups.is_empty() {
@@ -566,7 +608,7 @@ fn dismissed() -> Vec<PathBuf> {
 /// The question a person cannot answer for themselves is *what have I
 /// forgotten* — and the usual way to find out is to hit the missing thing a
 /// week later, in the middle of something else.
-pub fn discover(write: bool, dismiss: Option<&str>) -> Result<()> {
+pub fn discover(write: bool, dismiss: Option<&str>, json: bool) -> Result<()> {
     let home = home();
     let cfg_path = config_path();
 
@@ -594,6 +636,27 @@ pub fn discover(write: bool, dismiss: Option<&str>) -> Result<()> {
         .collect();
 
     let found = scan(&home, &tracked, &dismissed());
+
+    if json {
+        let out: Vec<_> = found
+            .iter()
+            .map(|f| {
+                serde_json::json!({
+                    "path": f.shown(&home),
+                    "scope": f.scope,
+                    "why": f.why,
+                    "source": match f.source {
+                        Source::Catalogue => "catalogue",
+                        Source::Noticed => "noticed",
+                    },
+                    "toml": f.as_toml(&home),
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&out)?);
+        return Ok(());
+    }
+
     if found.is_empty() {
         println!();
         println!(

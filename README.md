@@ -42,10 +42,11 @@ $ kitbag status
   + 3 new   ~ 1 changed   = 32 unchanged   ? 1 to build
 ```
 
-> **Status: early.** `status`, `plan`, `apply`, `push` and `restore` work
-> against a real machine and a real Bitwarden/Vaultwarden vault. `discover` proposes what is
-> untracked. `doctor`, `lint` and `trust` are still stubs, and only the `bw`
-> store is written so far. See [DESIGN.md](DESIGN.md) for the argument and the plan.
+> **Status: early, and working.** Every command below does what it says, against
+> a real machine and a real store — `bw`, `op`, `pass` or an `age`-encrypted
+> file. What is missing is the installer half: recipes cover packages, links,
+> macOS defaults and commands, and the rest of a machine's setup is still
+> ahead. See [DESIGN.md](DESIGN.md) for the argument and the plan.
 
 ## The question nothing answers
 
@@ -73,6 +74,15 @@ A machine declares which scopes it takes. A personal laptop never restores work
 credentials. A work machine does not install your personal toys. The same filter
 decides what is sent, what is written, and what a report shows.
 
+## Install
+
+```bash
+curl -LsSf https://raw.githubusercontent.com/Open330/kitbag/main/install.sh | sh
+```
+
+Detects the platform, checks the download against the checksums published with
+it, and puts one binary in `~/.local/bin`. Or `cargo install --path crates/kitbag-cli`.
+
 ## Commands
 
 ```console
@@ -84,6 +94,7 @@ kitbag track <path> --scope work
 kitbag push / restore         move it, one scope at a time
 kitbag doctor                 permissions, reachability, unscoped files, orphans
 kitbag lint                   refuse the things that must not be committed
+kitbag trust sync             the machines that may log in here
 kitbag completions zsh        …bash, fish, elvish, powershell
 ```
 

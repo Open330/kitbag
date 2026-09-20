@@ -21,10 +21,10 @@
 
 </div>
 
-> **상태: 초기.** `status`·`plan`·`apply`·`push`·`restore`가 실제 기계와 실제
-> Bitwarden/Vaultwarden 볼트를 상대로 동작합니다. `discover`는 추적 안 된 것을 찾아
-> 제안합니다. `doctor`·`lint`·`trust`는 아직 스텁이고, 저장소는 `bw`만 구현됐습니다 — 근거와 계획은
-> [DESIGN.md](DESIGN.md)에 있습니다.
+> **상태: 초기지만 동작합니다.** 아래 명령은 전부 실제 기계와 실제 저장소(`bw`·
+> `op`·`pass`·`age` 암호화 파일)를 상대로 제 일을 합니다. 남은 건 설치기 쪽입니다 —
+> 레시피가 패키지·링크·macOS 설정·명령까지 커버하고, 기계 설정의 나머지는 앞으로
+> 입니다. 근거와 계획은 [DESIGN.md](DESIGN.md)에 있습니다.
 
 ## 아무도 답하지 않는 질문
 
@@ -50,6 +50,15 @@ kitbag은 패키지·설정·시스템 설정·자격증명·앱 데이터를 **
 않고, 회사 기계는 개인 취미 도구를 설치하지 않습니다. 같은 필터가 **무엇을
 보낼지, 무엇을 쓸지, 보고에 무엇을 보여줄지**를 전부 결정합니다.
 
+## 설치
+
+```bash
+curl -LsSf https://raw.githubusercontent.com/Open330/kitbag/main/install.sh | sh
+```
+
+플랫폼을 감지하고, 릴리스와 함께 게시된 체크섬으로 다운로드를 검증한 뒤,
+바이너리 하나를 `~/.local/bin`에 둡니다. 또는 `cargo install --path crates/kitbag-cli`.
+
 ## 명령
 
 ```console
@@ -61,6 +70,7 @@ kitbag track <path> --scope work
 kitbag push / restore         scope 단위로 옮김
 kitbag doctor                 권한, 도달성, 미분류 파일, 저장소의 고아 항목
 kitbag lint                   커밋되면 안 되는 것을 거부
+kitbag trust sync             이 기계에 로그인할 수 있는 기계들
 kitbag completions zsh        …bash, fish, elvish, powershell
 ```
 

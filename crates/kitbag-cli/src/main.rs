@@ -6,6 +6,7 @@
 
 mod check;
 mod run;
+mod trust;
 mod ui;
 
 use anyhow::Result;
@@ -65,6 +66,28 @@ struct Cli {
 
     #[command(subcommand)]
     command: Command,
+}
+
+#[derive(Subcommand)]
+enum TrustCmd {
+    /// Who is trusted where
+    List { hosts: Vec<String> },
+    /// This machine joins the list
+    Register {
+        /// Make a new key for this machine first
+        #[arg(long)]
+        new_key: bool,
+    },
+    /// Collect every host's key, then give every host the union
+    Sync { hosts: Vec<String> },
+    /// Drop a key here and everywhere
+    Revoke {
+        /// A fingerprint or a comment
+        targets: Vec<String>,
+        /// Hosts to remove it from as well
+        #[arg(long, value_name = "HOST")]
+        from: Vec<String>,
+    },
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, ValueEnum)]
@@ -137,6 +160,12 @@ enum Command {
         paths: Vec<String>,
     },
 
+    /// The machines that may log in here
+    Trust {
+        #[command(subcommand)]
+        what: TrustCmd,
+    },
+
     /// Print a shell completion script
     Completions {
         #[arg(value_enum)]
@@ -170,18 +199,26 @@ fn main() -> Result<()> {
     let width = terminal_width();
 
     match cli.command {
-        Command::Status => run::status(cli.backend.as_deref(), wanted, colour, width)?,
-        Command::Plan => run::plan(&repo_root(), colour, width)?,
+        Command::Status => run::status(cli.backend.as_deref(), wanted, colour, width, cli.json)?,
+        Command::Plan => run::plan(&repo_root(), colour, width, cli.json)?,
         Command::Apply { ref only, yes } => {
             run::apply(&repo_root(), only.as_deref(), yes, colour, width)?
         }
-        Command::Discover { write, ref dismiss } => run::discover(write, dismiss.as_deref())?,
+        Command::Discover { write, ref dismiss } => {
+            run::discover(write, dismiss.as_deref(), cli.json)?
+        }
         Command::Track {
             ref path,
             ref scope,
             ref owner,
         } => run::track(path, scope.as_deref(), owner.as_deref())?,
         Command::Doctor => check::doctor(cli.backend.as_deref(), cli.json)?,
+        Command::Trust { ref what } => match what {
+            TrustCmd::List { hosts } => trust::list(hosts)?,
+            TrustCmd::Register { new_key } => trust::register(*new_key)?,
+            TrustCmd::Sync { hosts } => trust::sync(hosts)?,
+            TrustCmd::Revoke { targets, from } => trust::revoke_cmd(targets, from)?,
+        },
         Command::Lint { ref paths } => check::lint(paths, cli.json)?,
         Command::Push { dry_run } => run::push(cli.backend.as_deref(), wanted, dry_run)?,
         Command::Restore { dry_run } => run::restore(cli.backend.as_deref(), wanted, dry_run)?,
@@ -211,6 +248,7 @@ fn name_of(c: &Command) -> &'static str {
         Command::Restore { .. } => "restore",
         Command::Doctor => "doctor",
         Command::Lint { .. } => "lint",
+        Command::Trust { .. } => "trust",
         Command::Completions { .. } => "completions",
     }
 }
