@@ -548,3 +548,72 @@ fn every_item_arrives_however_many_go_at_once() {
         );
     }
 }
+
+#[test]
+fn discover_separates_untracked_from_tracked_but_unkept() {
+    // Tracked is not kept. An item named in the config and never sent is a
+    // file somebody believes is backed up, and the config cannot say
+    // otherwise — only the store can.
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    std::fs::create_dir_all(home.path().join(".envs")).unwrap();
+    std::fs::create_dir_all(home.path().join(".kube")).unwrap();
+    std::fs::write(
+        home.path().join(".envs/one.env"),
+        "# scope: personal\nA=1\n",
+    )
+    .unwrap();
+    std::fs::write(
+        home.path().join(".envs/two.env"),
+        "# scope: personal\nB=2\n",
+    )
+    .unwrap();
+    std::fs::write(home.path().join(".kube/config"), "apiVersion: v1\n").unwrap();
+    std::fs::write(
+        home.path().join("machine.toml"),
+        "scopes = [\"personal\"]\n\n[[track]]\npath = \"~/.envs/*.env\"\n",
+    )
+    .unwrap();
+
+    kitbag(
+        home.path(),
+        state.path(),
+        &["push", "--backend", "bw", "--only", "env:one"],
+    );
+
+    let out = kitbag(home.path(), state.path(), &["discover", "--backend", "bw"]);
+
+    assert!(out.contains("tracked here and not in the store"), "{out}");
+    assert!(out.contains("env:two"), "{out}");
+    assert!(
+        !out.contains("! env:one"),
+        "the one that is kept is not news:\n{out}"
+    );
+    assert!(
+        out.contains(".kube/config"),
+        "and the untracked one is still found:\n{out}"
+    );
+}
+
+#[test]
+fn discover_without_a_store_says_only_what_it_can_know() {
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    std::fs::create_dir_all(home.path().join(".envs")).unwrap();
+    std::fs::write(
+        home.path().join(".envs/one.env"),
+        "# scope: personal\nA=1\n",
+    )
+    .unwrap();
+    std::fs::write(
+        home.path().join("machine.toml"),
+        "scopes = [\"personal\"]\n\n[[track]]\npath = \"~/.envs/*.env\"\n",
+    )
+    .unwrap();
+
+    let out = kitbag(home.path(), state.path(), &["discover"]);
+    assert!(
+        !out.contains("not in the store"),
+        "no store was named, so nothing is claimed about one:\n{out}"
+    );
+}

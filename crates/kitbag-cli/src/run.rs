@@ -1160,7 +1160,12 @@ fn dismissed() -> Vec<PathBuf> {
 /// The question a person cannot answer for themselves is *what have I
 /// forgotten* — and the usual way to find out is to hit the missing thing a
 /// week later, in the middle of something else.
-pub fn discover(write: bool, dismiss: Option<&str>, json: bool) -> Result<()> {
+pub fn discover(
+    write: bool,
+    dismiss: Option<&str>,
+    backend: Option<&str>,
+    json: bool,
+) -> Result<()> {
     let home = home();
     let cfg_path = config_path();
 
@@ -1181,13 +1186,21 @@ pub fn discover(write: bool, dismiss: Option<&str>, json: bool) -> Result<()> {
     }
 
     let config = Config::load_or_default(&cfg_path)?.with_env_skips();
-    let tracked: Vec<PathBuf> = collect(&config, &home)
-        .items
-        .into_iter()
-        .map(|i| i.path)
-        .collect();
+    let Collected { items, .. } = collect(&config, &home);
+    let tracked: Vec<PathBuf> = items.iter().map(|i| i.path.clone()).collect();
 
     let found = scan(&home, &tracked, &dismissed());
+
+    // Tracked is not the same as kept. An item named in this machine's config
+    // and never sent is a file somebody believes is backed up, and asking the
+    // config cannot tell them otherwise — only the store can.
+    let mut unkept: Vec<&kitbag_core::Item> = Vec::new();
+    if let Some(name) = backend {
+        let store = open_store(Some(name))?;
+        let held: std::collections::BTreeSet<String> =
+            store.list()?.into_iter().map(|l| l.name).collect();
+        unkept = items.iter().filter(|i| !held.contains(&i.name)).collect();
+    }
 
     if json {
         let out: Vec<_> = found
@@ -1207,6 +1220,15 @@ pub fn discover(write: bool, dismiss: Option<&str>, json: bool) -> Result<()> {
             .collect();
         println!("{}", serde_json::to_string_pretty(&out)?);
         return Ok(());
+    }
+
+    if !unkept.is_empty() {
+        println!();
+        println!("  {} tracked here and not in the store:", unkept.len());
+        for item in &unkept {
+            println!("  ! {:<28} {}", item.name, pretty(&item.path, &home));
+        }
+        println!("  kitbag push --backend <name> sends them.");
     }
 
     if found.is_empty() {

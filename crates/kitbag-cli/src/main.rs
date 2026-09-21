@@ -246,7 +246,7 @@ fn main() -> Result<()> {
             run::apply(&repo_root(), only.as_deref(), yes, colour, width)?
         }
         Command::Discover { write, ref dismiss } => {
-            run::discover(write, dismiss.as_deref(), cli.json)?
+            run::discover(write, dismiss.as_deref(), cli.backend.as_deref(), cli.json)?
         }
         Command::Track {
             ref path,
