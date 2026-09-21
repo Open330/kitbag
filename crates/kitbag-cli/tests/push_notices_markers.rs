@@ -282,3 +282,41 @@ fn both_sides_moving_stops_and_says_so() {
     assert!(!after.contains("not settled"), "{after}");
     assert!(after.contains("0 sent, 1 already there"), "{after}");
 }
+
+#[test]
+fn resolve_without_a_terminal_asks_nothing_and_says_what_would() {
+    // Piped, cron, a script: there is nobody to answer, so it must not wait
+    // and must not choose. It lists what is unsettled and stops.
+    let (a, state) = machine("scopes = [\"personal\"]\n\n[[track]]\npath = \"~/.envs/*.env\"\n");
+    kitbag(a.path(), state.path(), &["push", "--backend", "bw"]);
+    let b = second_machine(state.path(), "# scope: personal\nA=1\n");
+
+    std::fs::write(
+        a.path().join(".envs/one.env"),
+        "# scope: personal\nA=from-a\n",
+    )
+    .unwrap();
+    kitbag(a.path(), state.path(), &["push", "--backend", "bw"]);
+    std::fs::write(
+        b.path().join(".envs/one.env"),
+        "# scope: personal\nA=from-b\n",
+    )
+    .unwrap();
+
+    let out = kitbag(b.path(), state.path(), &["resolve", "--backend", "bw"]);
+    assert!(out.contains("no terminal to ask in"), "{out}");
+    assert!(out.contains("env:one"), "{out}");
+    assert_eq!(
+        std::fs::read_to_string(b.path().join(".envs/one.env")).unwrap(),
+        "# scope: personal\nA=from-b\n",
+        "nothing was decided for anybody:\n{out}"
+    );
+}
+
+#[test]
+fn resolve_has_nothing_to_say_when_nothing_is_in_conflict() {
+    let (a, state) = machine("scopes = [\"personal\"]\n\n[[track]]\npath = \"~/.envs/*.env\"\n");
+    kitbag(a.path(), state.path(), &["push", "--backend", "bw"]);
+    let out = kitbag(a.path(), state.path(), &["resolve", "--backend", "bw"]);
+    assert!(out.contains("Nothing to settle"), "{out}");
+}

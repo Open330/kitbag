@@ -1252,8 +1252,209 @@ pub fn diff(backend: Option<&str>, only: &[String], colour: Colour) -> Result<()
     Ok(())
 }
 
+/// What an answer at the prompt means.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Choice {
+    Mine,
+    Theirs,
+    Skip,
+    Quit,
+}
+
+/// Read an answer. Anything not understood is a skip, and so is an empty
+/// line: the key that is easiest to hit by accident must be the one that
+/// writes nothing over anything.
+pub fn choice(answer: &str) -> Choice {
+    match answer.trim().to_ascii_lowercase().as_str() {
+        "m" | "mine" => Choice::Mine,
+        "t" | "theirs" => Choice::Theirs,
+        "q" | "quit" => Choice::Quit,
+        _ => Choice::Skip,
+    }
+}
+
+/// What `diff` prints for one item, so `resolve` can show the same thing
+/// without a second round trip to the store.
+fn describe_one(item: &kitbag_core::Item, theirs: &[u8]) {
+    use kitbag_core::difference::{describe, Difference};
+
+    match describe(&item.payload, theirs) {
+        Difference::Keys {
+            only_here,
+            only_there,
+            differing,
+            here_lines,
+            there_lines,
+        } => {
+            println!("      here   {here_lines} lines");
+            println!("      store  {there_lines} lines");
+            if !only_here.is_empty() {
+                println!("      only here:   {}", only_here.join(" "));
+            }
+            if !only_there.is_empty() {
+                println!("      only there:  {}", only_there.join(" "));
+            }
+            if !differing.is_empty() {
+                println!("      differ:      {}", differing.join(" "));
+            }
+        }
+        Difference::Opaque {
+            here_bytes,
+            there_bytes,
+            here_hash,
+            there_hash,
+        } => {
+            println!("      here   {here_bytes} bytes  {}", &here_hash[..12]);
+            println!("      store  {there_bytes} bytes  {}", &there_hash[..12]);
+        }
+        Difference::None => println!("      the same contents under different markers"),
+    }
+}
+
+/// Settle the differences neither side can settle alone, one at a time.
+///
+/// Everything needed was already here — `diff` says what differs and `--only`
+/// acts on one item — but only as three commands typed per conflict, with the
+/// names copied between them. This asks.
+///
+/// Nothing is decided for the person: every item is shown and every answer is
+/// theirs, and the answer that needs no thought — Enter — is the one that does
+/// nothing.
+pub fn resolve(backend: Option<&str>, wanted: Option<Wanted>, colour: Colour) -> Result<()> {
+    use std::io::{IsTerminal, Write};
+
+    let home = home();
+    let config = Config::load_or_default(&config_path())?.with_env_skips();
+    let wanted = wanted.unwrap_or_else(|| config.wanted());
+    let Collected { items, .. } = collect(&config, &home);
+    let mut ledger = kitbag_core::ledger::Ledger::load(&ledger_path());
+
+    let progress = ui::Progress::new(colour);
+    progress.say("reading what the store holds");
+    let store = open_store(backend)?;
+    let remote: Remote = store
+        .list()?
+        .into_iter()
+        .map(|l| (l.name, l.fingerprint))
+        .collect();
+    // Ended, not just cleared: what follows is a conversation, and a spinner
+    // redrawing itself underneath a question is not a good one.
+    drop(progress);
+
+    let unsettled: Vec<&kitbag_core::Item> = items
+        .iter()
+        .filter(|i| wanted.accepts(&i.scope) && !config.skips(&i.name))
+        .filter(|i| !kitbag_core::state::compare_against(i, &remote, &home, &ledger).is_decided())
+        .collect();
+
+    println!();
+    if unsettled.is_empty() {
+        println!("  Nothing to settle.");
+        return Ok(());
+    }
+
+    if !std::io::stdin().is_terminal() {
+        println!(
+            "  {} to settle, and no terminal to ask in:",
+            unsettled.len()
+        );
+        for item in &unsettled {
+            println!("  · {}", item.name);
+        }
+        println!();
+        println!("  kitbag push --only <item>      settle it this way");
+        println!("  kitbag restore --only <item>   or the other");
+        return Ok(());
+    }
+
+    let total = unsettled.len();
+    let mut settled = 0usize;
+    for (at, item) in unsettled.iter().enumerate() {
+        let theirs = store.get(&item.name)?;
+
+        println!("  ! {}  ({}/{total})", item.name, at + 1);
+        describe_one(item, &theirs.payload);
+
+        print!("      [m]ine  [t]heirs  [s]kip  [q]uit > ");
+        std::io::stdout().flush()?;
+        let mut answer = String::new();
+        std::io::stdin().read_line(&mut answer)?;
+
+        match choice(&answer) {
+            Choice::Mine => {
+                let envelope = kitbag_core::collect::envelope_for(item, &home);
+                store.put(&item.name, &envelope)?;
+                ledger.record(&item.name, &envelope.fingerprint());
+                println!("      sent this machine's\n");
+                settled += 1;
+            }
+            Choice::Theirs => {
+                match theirs.destination(&home) {
+                    Some(dest) => {
+                        let kept = place(&dest, &theirs.payload)?;
+                        match kept {
+                            Some(backup) => println!(
+                                "      took the store's — the old one is at {}\n",
+                                pretty(&backup, &home)
+                            ),
+                            None => println!("      took the store's\n"),
+                        }
+                    }
+                    None => match &item.source {
+                        kitbag_core::collect::Source::Command { restore } => {
+                            pipe_into(restore, &theirs.payload)?;
+                            println!("      took the store's, into `{restore}`\n");
+                        }
+                        kitbag_core::collect::Source::File(_) => {
+                            println!("      nowhere to put it; left alone\n");
+                            continue;
+                        }
+                    },
+                }
+                ledger.record(&item.name, &theirs.fingerprint());
+                settled += 1;
+            }
+            Choice::Quit => {
+                println!("      stopped\n");
+                break;
+            }
+            Choice::Skip => println!("      left alone\n"),
+        }
+    }
+
+    if let Err(e) = ledger.save(&ledger_path()) {
+        println!("  could not record what was exchanged: {e}");
+    }
+    println!("  {settled} settled, {} left.", total - settled);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn an_answer_is_read_generously_but_a_blank_one_does_nothing() {
+        use super::{choice, Choice};
+        for yes in ["m", "M", "mine", " mine ", "MINE"] {
+            assert_eq!(choice(yes), Choice::Mine, "{yes:?}");
+        }
+        for theirs in ["t", "T", "theirs", " theirs\n"] {
+            assert_eq!(choice(theirs), Choice::Theirs, "{theirs:?}");
+        }
+        assert_eq!(choice("q"), Choice::Quit);
+        assert_eq!(choice("quit"), Choice::Quit);
+    }
+
+    #[test]
+    fn anything_not_understood_writes_nothing_over_anything() {
+        // The key easiest to hit by accident is Enter, and one of the two
+        // real answers overwrites a machine's copy of a credential. So the
+        // accident has to be the one that does nothing.
+        for unclear in ["", "\n", " ", "y", "yes", "mnie", "both", "?"] {
+            assert_eq!(choice(unclear), Choice::Skip, "{unclear:?}");
+        }
+    }
+
     use super::*;
     use std::os::unix::fs::PermissionsExt;
 

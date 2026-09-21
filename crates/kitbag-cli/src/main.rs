@@ -149,6 +149,9 @@ enum Command {
         only: Vec<String>,
     },
 
+    /// Settle the differences neither side can settle alone, one at a time
+    Resolve,
+
     /// Send tracked state to the store
     Push {
         /// Say what would be sent and stop
@@ -248,6 +251,7 @@ fn main() -> Result<()> {
         },
         Command::Lint { ref paths } => check::lint(paths, cli.json)?,
         Command::Diff { ref only } => run::diff(cli.backend.as_deref(), only, colour)?,
+        Command::Resolve => run::resolve(cli.backend.as_deref(), wanted, colour)?,
         Command::Push { dry_run, ref only } => {
             run::push(cli.backend.as_deref(), wanted, dry_run, only, colour)?
         }
@@ -277,6 +281,7 @@ fn name_of(c: &Command) -> &'static str {
         Command::Discover { .. } => "discover",
         Command::Track { .. } => "track",
         Command::Diff { .. } => "diff",
+        Command::Resolve => "resolve",
         Command::Push { .. } => "push",
         Command::Restore { .. } => "restore",
         Command::Doctor => "doctor",
