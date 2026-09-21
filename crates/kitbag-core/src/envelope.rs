@@ -40,6 +40,11 @@ pub struct Envelope {
     /// Where this belongs, written `~/…`. A restore onto a machine where the
     /// file does not exist yet - the whole point of a restore - has no other
     /// way to know, since there is nothing on disk to learn it from.
+    ///
+    /// Not the same question as the item's name, and the two diverge for
+    /// anything `per_machine`: the store needs a name no other machine will
+    /// claim, and the machine needs the file where the program that reads it
+    /// looks. `ssh:id_ed25519@jiun-mbp` lives at `~/.ssh/id_ed25519`.
     pub path: Option<String>,
     /// The platforms this belongs on, empty meaning all of them. It travels in
     /// the envelope rather than in a machine's config because the machine that

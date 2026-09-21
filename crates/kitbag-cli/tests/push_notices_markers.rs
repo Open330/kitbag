@@ -388,3 +388,33 @@ fn an_item_that_names_no_machine_is_taken_by_anyone() {
     assert!(out.contains("1 written"), "{out}");
     assert!(b.path().join(".envs/one.env").exists(), "{out}");
 }
+
+#[test]
+fn naming_it_after_a_machine_does_not_move_the_file() {
+    // The store needs a name that is unique across machines; the machine needs
+    // the key where ssh looks for it. Those are two fields, and only the first
+    // one changes.
+    let state = tempfile::tempdir().expect("state");
+    let a = machine_with_key("box-a", "AAAAkeyofa");
+    kitbag(a.path(), state.path(), &["push", "--backend", "bw"]);
+
+    // Take the key away and restore it: it has to come back to the default
+    // path, not to anything with a machine name in it.
+    std::fs::remove_file(a.path().join(".ssh/id_ed25519")).unwrap();
+    let out = kitbag(a.path(), state.path(), &["restore", "--backend", "bw"]);
+
+    assert!(
+        out.contains("~/.ssh/id_ed25519"),
+        "restored elsewhere:\n{out}"
+    );
+    assert!(
+        a.path().join(".ssh/id_ed25519").exists(),
+        "the default path is where ssh looks:\n{out}"
+    );
+    assert!(
+        !a.path().join(".ssh").join("id_ed25519@box-a").exists(),
+        "the store's name leaked onto the disk"
+    );
+    let back = std::fs::read_to_string(a.path().join(".ssh/id_ed25519")).unwrap();
+    assert!(back.contains("AAAAkeyofa"), "{back}");
+}
