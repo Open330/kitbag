@@ -65,15 +65,17 @@ to my employer, and what happens to it when I leave".
 ## 4. Command surface
 
 ```
-kitbag status                 what this machine has, grouped by scope, marked against the remote
+kitbag status                 what this machine has, grouped by scope, marked against the store
 kitbag plan                   what apply would change
 kitbag apply [--only pkg]     make it so
 kitbag discover               scan for personal state that is not tracked yet, and propose it
 kitbag track <path> --scope work [--owner acme]
-kitbag push [--scope ...]     send tracked state to the vault
-kitbag restore [--scope ...]  write it back here
-kitbag doctor                 permissions, reachability, unscoped files, orphans in the vault
-kitbag diff <item>            what changed — names and shapes, never values
+kitbag push [--only name…]    send tracked state to the store
+kitbag restore [--only name…] write it back here
+kitbag diff [name…]           what differs from the store — shapes and names, never values
+kitbag resolve                settle, one at a time, what neither side can settle alone
+kitbag programs [--restore]   what is installed here, written down; or put back from that writing
+kitbag doctor                 permissions, reachability, unscoped files, orphans in the store
 kitbag trust                  the machines that may log in here (folds in ssh-trust.sh)
 ```
 
@@ -81,13 +83,19 @@ Defaults that matter: `plan` is implied unless `apply`/`push`/`restore` is asked
 for, output is a tree grouped by scope, `--json` exists for every command, and
 no command ever prints a secret's value.
 
+Four global flags decide what a run touches: `--scope` (which scopes this
+machine takes this time), `--skip name,…` (items it keeps to itself, in both
+directions), `--jobs N` (how many items are in flight at once — each is a
+process, and starting them one after another is most of the wait), and
+`--backend`.
+
 ```
   work · acme  (14)
-  ├── ~ env:github               GITHUB_GITEA_TOKEN GITHUB_DEPLOY_TOKEN …
+  ├── > env:github               GITHUB_GITEA_TOKEN GITHUB_DEPLOY_TOKEN …
   ├── = env:jenkins              JENKINS_API_KEY JENKINS_USER
   └── + file:aws-vault-keychain  binary, 25788 bytes → ~/Library/Keychains/…
 
-  + 3 new   ~ 1 changed   = 35 unchanged   ? 1 built on push
+  + 3 new   > 1 ahead   = 35 unchanged   ? 1 not comparable
 ```
 
 ## 5. Model
@@ -118,7 +126,14 @@ enum Sink {
     Symlink { target: PathBuf },
 }
 
-enum State { New, Changed, Unchanged, Unknown }   // Unknown: only building it would tell
+enum State {
+    New,        // here, and the store has never seen it
+    Ahead,      // moved here since the last exchange; the store stayed put
+    Behind,     // the store moved; this machine stayed put
+    Conflict,   // both moved, and not to the same place
+    Unchanged,  // neither moved
+    Unknown,    // only building it would tell — see `volatile` below
+}
 ```
 
 Two rules the bash version arrived at the hard way, kept as invariants:
@@ -127,6 +142,62 @@ Two rules the bash version arrived at the hard way, kept as invariants:
   over any table that names it, because the table does not get copied along.
 - **Merging never deletes.** A host may hold keys, lines or accounts this tool
   has never seen. Only an explicit `revoke`/`prune` removes anything.
+
+Four more that the first four machines added:
+
+- **A path is not a name.** Every machine's ssh key lives at
+  `~/.ssh/id_ed25519`; four of them must not overwrite each other on the way
+  into one store. A `per_machine` track appends `@<machine>` to the *item name*
+  and puts the machine in the envelope. The path is left exactly where it was:
+  the difference exists in the store and nowhere else.
+- **A refusal belongs to the machine making it.** `skip` names items this
+  machine neither sends nor accepts. It is read from the machine's own config,
+  never from the store, so a machine cannot be talked into taking something it
+  has declined — and it works in both directions, because the dangerous half is
+  the one that writes.
+- **Not every export is stable.** An export carrying a timestamp or a window
+  position differs from itself between two runs. `volatile` says so: the item is
+  still sent, and it is reported `?` rather than accused every day of having
+  changed.
+- **A program is a name, not a payload.** Binaries are large, built for one
+  architecture, and still available from whoever published them. What is worth
+  keeping is `manager, name, version`; a restore asks the manager for it again.
+  Nothing is ever uninstalled — the list is what a machine must not lack, not
+  what it may not exceed.
+
+### 5.1 Three-way, because two-way cannot say who moved
+
+Comparing this machine against the store answers "are these the same" and
+nothing further. It cannot tell a local edit from a remote one, so every
+difference arrives as a question for a person. The missing third point is what
+the two last agreed on:
+
+```
+~/.config/kitbag/exchanged     name → fingerprint, mode 0600
+```
+
+Every push and every restore records the fingerprint of what crossed. After
+that:
+
+| here | store | last agreed | state |
+| --- | --- | --- | --- |
+| a | a | a | `=` unchanged |
+| b | a | a | `>` ahead — `push` sends it |
+| a | b | a | `<` behind — `restore` writes it |
+| b | c | a | `!` conflict — only a person can say |
+| b | c | — | `~` changed with no base, treated as a conflict |
+
+`push` sends what is ahead and holds the conflicts; `restore` writes what is
+behind and holds the conflicts; neither picks a winner. `resolve` then walks
+what was held, one item at a time, showing what differs before it asks —
+structurally for keys, by line for text, by entry for archives, and by size
+alone for anything holding key material, where the shape of the difference is
+itself worth not printing.
+
+Two hashes, because the two questions are not the same one. `sha256` covers the
+payload alone, so a restore can compare it against a file already on disk. The
+`fingerprint` covers the whole envelope, so a push notices that the scope, the
+machine or the platform changed even when the bytes did not.
 
 ## 6. Configuration
 
@@ -227,12 +298,27 @@ Each finding comes with a proposed scope and the reason for it, and is accepted
 or dismissed interactively. Dismissals are remembered, so the second run is
 quiet.
 
+Tracked is not the same as kept, and the difference is the one that costs
+something. A path can sit in this machine's config for months, named and
+scoped and never once sent, and every report will call it tracked. So
+`discover` asks the store as well, and says which is which:
+
+```text
+1 tracked here and not in the store:
+! env:two                      ~/.envs/two.env
+kitbag push --backend <name> sends them.
+```
+
+It also proposes what has no path at all. A machine with a package manager and
+nothing recording one is missing a `programs` track, and that is as discoverable
+as a file is.
+
 ## 9. Architecture
 
 ```
 crates/
   kitbag-core      model, scope, plan/apply engine, hashing, diff
-  kitbag-providers pkg(brew|apt|cask|mas|cargo|npm) file defaults launchd command
+  kitbag-providers pkg(brew|apt|cask|mas|cargo|npm) file defaults launchd command programs
   kitbag-vault     Backend trait; bitwarden-cli impl first, native later
   kitbag-catalog   discovery table + heuristics
   kitbag-cli       clap, tree/json output, TUI for discover and status
@@ -248,11 +334,21 @@ backend only to keep bytes under a name:
 kitbag/1
 scope: work
 owner: acme
+path: ~/.envs/acme.env
+platform: macos
+machine: june-mbp
+restore: file
 encoding: utf8
 sha256: 1f0e3d…
 
 export TOKEN=…
 ```
+
+The headers past `scope` are what makes a store into something a machine can be
+rebuilt from: where the payload goes, what writes it, which platform it was
+taken on, and — for a `per_machine` item — whose it is. A machine reading an
+item for another platform declines it rather than writing a Windows path onto a
+Mac.
 
 A store with native fields may mirror the header into them so its own UI shows
 the scope; the envelope stays authoritative. Binary payloads are base64 inside
@@ -347,6 +443,14 @@ at any point.
 | 3 | bootstrap script, release binaries, tap | `install.sh` becomes the 40-line bootstrap |
 | 4 | `discover`, `doctor`, TUI, `trust` | `scripts/ssh-trust.sh` deleted |
 
+Where it actually stands: phase 1 is done and past the interesting part.
+`modules/secrets.sh` dispatches to kitbag, four machines run it, and the shell
+engine remains only as the fallback path and as the thing the Windows machine
+still uses. The two engines share one vault and — this is the part that bites —
+share item *names* too, so every reader filters on a `kitbag` field to tell a
+kitbag item from its shell-era namesake. Phase 2 has `programs`; the rest of it
+is still bash.
+
 ## 13. Open questions
 
 1. ~~**Recipes: data or code?**~~ **Answered — see appendix A.** Twenty-two
@@ -357,9 +461,11 @@ at any point.
 2. **Where does the public/private line fall for recipes?** A work machine's
    recipe list may itself be sensitive. Probably: recipes public, the machine's
    selection private.
-3. **Package removal.** Declaring installed packages is easy; deciding that
-   something absent from the file should be uninstalled is how these tools eat
-   people's machines. Default: never remove, report drift.
+3. ~~**Package removal.**~~ **Answered in the only direction that is safe.**
+   `programs` records what is installed and installs back what is missing;
+   absence from the list removes nothing, ever. Deciding that something absent
+   from a file should be uninstalled is how these tools eat people's machines.
+   Drift is reported, not corrected.
 4. **Windows.** WSL is covered by the Linux target. Native Windows is not in
    scope until someone needs it.
 
