@@ -60,6 +60,8 @@ pub struct Listing {
     /// The platforms the item belongs on, when the store can say without being
     /// asked for the value. `None` is "cannot say cheaply", not "everywhere".
     pub platform: Option<Vec<String>>,
+    /// The machine an item belongs to, when the store can say cheaply.
+    pub machine: Option<String>,
 }
 
 pub trait Backend {
@@ -166,6 +168,7 @@ impl Backend for MemoryBackend {
                     payload_hash: parsed.as_ref().map(|e| e.sha256()),
                     fingerprint: parsed.as_ref().map(|e| e.fingerprint()),
                     platform: parsed.as_ref().map(|e| e.platform.clone()),
+                    machine: parsed.as_ref().and_then(|e| e.machine.clone()),
                     scope: parsed.map(|e| e.scope),
                 }
             })

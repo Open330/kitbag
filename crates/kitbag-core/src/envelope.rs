@@ -56,6 +56,11 @@ pub struct Envelope {
     /// thing to trust; it is a new thing it can do, which is why `restore`
     /// names the command it is about to run before running it.
     pub restore: Option<String>,
+    /// The machine this belongs to, when it belongs to one rather than to
+    /// their owner. A restore elsewhere leaves it alone: another machine's
+    /// SSH key written over this one's is two machines on one key, which is
+    /// the thing the name was there to prevent.
+    pub machine: Option<String>,
     pub payload: Vec<u8>,
     /// Headers kitbag did not recognise, kept so a newer writer does not lose
     /// information when an older reader rewrites the item.
@@ -87,6 +92,7 @@ impl Envelope {
             payload,
             platform: Vec::new(),
             restore: None,
+            machine: None,
             extra: BTreeMap::new(),
         }
     }
@@ -118,6 +124,17 @@ impl Envelope {
 
     pub fn sha256(&self) -> String {
         payload_hash(&self.payload)
+    }
+
+    pub fn with_machine(mut self, machine: Option<String>) -> Self {
+        self.machine = machine;
+        self
+    }
+
+    /// Is this machine the one it belongs to? An item that names no machine
+    /// belongs to whoever takes it, which is almost all of them.
+    pub fn belongs_to(&self, machine: &str) -> bool {
+        self.machine.as_deref().is_none_or(|m| m == machine)
     }
 
     pub fn with_restore(mut self, restore: Option<String>) -> Self {
@@ -175,6 +192,9 @@ impl Envelope {
         if !self.platform.is_empty() {
             out.push_str(&format!("platform: {}\n", self.platform.join(", ")));
         }
+        if let Some(machine) = &self.machine {
+            out.push_str(&format!("machine: {machine}\n"));
+        }
         if let Some(restore) = &self.restore {
             // A header is one line, and a command need not be: escape rather
             // than truncate, so what comes back is what went in.
@@ -204,6 +224,7 @@ impl Envelope {
         let mut path = None;
         let mut platform: Vec<String> = Vec::new();
         let mut restore = None;
+        let mut machine = None;
         let mut encoding = "utf8".to_string();
         let mut sha = None;
         let mut extra = BTreeMap::new();
@@ -224,6 +245,7 @@ impl Envelope {
                 }
                 "owner" => owner = Some(v),
                 "path" => path = Some(v),
+                "machine" => machine = Some(v),
                 "restore" => restore = Some(unescape(&v)),
                 "platform" => {
                     platform = v
@@ -260,6 +282,7 @@ impl Envelope {
             payload,
             platform,
             restore,
+            machine,
             extra,
         };
 

@@ -35,6 +35,9 @@ pub struct Item {
     pub volatile: bool,
     /// The platforms this belongs on, empty meaning all of them.
     pub platform: Vec<String>,
+    /// Set when this belongs to one machine rather than to their owner, so
+    /// that four machines can each keep their own under a name of their own.
+    pub machine: Option<String>,
 }
 
 impl Item {
@@ -76,6 +79,7 @@ pub fn envelope_for(item: &Item, home: &Path) -> crate::Envelope {
             Source::Command { .. } => None,
             Source::File(path) => Some(crate::config::shorten(path, home)),
         })
+        .with_machine(item.machine.clone())
         .with_restore(match &item.source {
             Source::Command { restore } => Some(restore.clone()),
             Source::File(_) => None,
@@ -130,8 +134,17 @@ pub struct Collected {
 /// Everything the config points at, under `home`.
 pub fn collect(config: &Config, home: &Path) -> Collected {
     let mut out = Collected::default();
+    let machine = config.machine_name();
     for track in &config.tracks {
         collect_track(track, home, &mut out);
+        // Naming happens after collection, so a glob still derives each file's
+        // own name before the machine is added to it.
+        if track.per_machine {
+            for item in out.items.iter_mut().filter(|i| i.machine.is_none()) {
+                item.name = format!("{}@{machine}", item.name);
+                item.machine = Some(machine.clone());
+            }
+        }
     }
     out.items.sort_by(|a, b| a.name.cmp(&b.name));
     out
@@ -225,6 +238,7 @@ fn collect_command(track: &Track, exported: &crate::config::Exported, out: &mut 
             },
             volatile: track.volatile,
             platform: track.platform.clone(),
+            machine: None,
         }),
         Ok(o) if o.status.success() => out.skipped.push(Skipped {
             path: PathBuf::from(&exported.export),
@@ -281,6 +295,7 @@ fn read_item(path: &Path, track: &Track, home: &Path) -> Result<Item, Reason> {
         source: Source::File(path.to_path_buf()),
         volatile: track.volatile,
         platform: track.platform.clone(),
+        machine: None,
     })
 }
 

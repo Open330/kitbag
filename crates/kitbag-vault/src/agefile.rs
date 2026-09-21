@@ -131,6 +131,7 @@ impl Backend for AgeFile {
                     payload_hash: parsed.as_ref().map(|e| e.sha256()),
                     fingerprint: parsed.as_ref().map(|e| e.fingerprint()),
                     platform: parsed.as_ref().map(|e| e.platform.clone()),
+                    machine: parsed.as_ref().and_then(|e| e.machine.clone()),
                     scope: parsed.map(|e| e.scope),
                     name,
                 }

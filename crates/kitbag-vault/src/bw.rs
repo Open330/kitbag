@@ -272,6 +272,7 @@ impl Backend for Bw {
                         scope: field(item, "scope").and_then(|s| s.parse().ok()),
                         platform: field(item, "platform")
                             .map(|p| p.split(',').map(|s| s.trim().to_string()).collect()),
+                        machine: field(item, "machine"),
                     })
                 })
                 .collect()
@@ -426,6 +427,7 @@ fn item_body(name: &str, envelope: &Envelope, folder: &str, inline: bool) -> ser
         { "name": "owner", "value": envelope.owner.clone().unwrap_or_default(), "type": 0 },
         { "name": "hash", "value": envelope.sha256(), "type": 0 },
         { "name": "platform", "value": envelope.platform.join(", "), "type": 0 },
+        { "name": "machine", "value": envelope.machine.clone().unwrap_or_default(), "type": 0 },
         { "name": "fingerprint", "value": envelope.fingerprint(), "type": 0 },
     ]);
 

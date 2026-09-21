@@ -18,6 +18,10 @@ pub struct Config {
     pub scopes: Vec<String>,
     #[serde(default, rename = "track")]
     pub tracks: Vec<Track>,
+    /// What this machine is called, for items that belong to one machine.
+    /// Defaults to the short hostname; set it when that is not stable.
+    #[serde(default)]
+    pub machine: Option<String>,
     /// Items this machine will not exchange, by name.
     ///
     /// Scope says whose an item is and `platform` says where it can live.
@@ -31,7 +35,25 @@ pub struct Config {
     pub skip: Vec<String>,
 }
 
+/// The short hostname, which is what the machines in this arrangement are
+/// called. Asked of the system once per run.
+pub fn this_machine() -> String {
+    std::process::Command::new("hostname")
+        .arg("-s")
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
 impl Config {
+    /// What this machine calls itself.
+    pub fn machine_name(&self) -> String {
+        self.machine.clone().unwrap_or_else(this_machine)
+    }
+
     /// Does this machine refuse to exchange this item?
     pub fn skips(&self, name: &str) -> bool {
         self.skip.iter().any(|s| s == name)
@@ -96,6 +118,15 @@ pub struct Track {
     /// config it does not have yet.
     #[serde(default)]
     pub platform: Vec<String>,
+    /// This belongs to one machine, not to their owner.
+    ///
+    /// Four machines derive `ssh:id_ed25519` from the same path and hold four
+    /// different keys under it, which is one name for four things. The answer
+    /// is not to stop backing three of them up — a key that exists nowhere
+    /// else is gone when its machine is — but to give each one a name that
+    /// says whose it is: `ssh:id_ed25519@jiun-mbp`.
+    #[serde(default)]
+    pub per_machine: bool,
     /// Set when the export is not byte-stable: tokens that rotate on their own,
     /// a timestamp baked into the format. Comparing such an item against the
     /// store answers "different" every time and means nothing by it, so kitbag

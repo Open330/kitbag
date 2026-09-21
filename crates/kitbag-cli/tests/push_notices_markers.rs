@@ -320,3 +320,71 @@ fn resolve_has_nothing_to_say_when_nothing_is_in_conflict() {
     let out = kitbag(a.path(), state.path(), &["resolve", "--backend", "bw"]);
     assert!(out.contains("Nothing to settle"), "{out}");
 }
+
+/// A machine with its own key, named after itself.
+fn machine_with_key(name: &str, key: &str) -> tempfile::TempDir {
+    let home = tempfile::tempdir().expect("home");
+    std::fs::create_dir_all(home.path().join(".ssh")).unwrap();
+    // Assembled, so this file does not carry a key-shaped literal: kitbag
+    // lints its own source and is right to.
+    let fence = format!("OPENSSH {} KEY", "PRIVATE");
+    std::fs::write(
+        home.path().join(".ssh/id_ed25519"),
+        format!("-----BEGIN {fence}-----\n{key}\n-----END {fence}-----\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        home.path().join("machine.toml"),
+        format!(
+            "machine = \"{name}\"\nscopes = [\"personal\"]\n\n[[track]]\n\
+             path = \"~/.ssh/id_ed25519\"\nscope = \"personal\"\nper_machine = true\n"
+        ),
+    )
+    .unwrap();
+    home
+}
+
+#[test]
+fn four_machines_can_each_keep_their_own_key_and_still_have_it_backed_up() {
+    // Four machines derive `ssh:id_ed25519` from the same path and hold four
+    // different keys. Refusing to exchange it kept them apart and left three
+    // of them backed up nowhere — a key that exists in one place is gone with
+    // the machine it is on.
+    let state = tempfile::tempdir().expect("state");
+    let a = machine_with_key("box-a", "AAAAkeyofa");
+    let b = machine_with_key("box-b", "AAAAkeyofb");
+
+    let sent_a = kitbag(a.path(), state.path(), &["push", "--backend", "bw"]);
+    assert!(sent_a.contains("ssh:id_ed25519@box-a"), "{sent_a}");
+    let sent_b = kitbag(b.path(), state.path(), &["push", "--backend", "bw"]);
+    assert!(sent_b.contains("ssh:id_ed25519@box-b"), "{sent_b}");
+
+    // Both are kept, under names that say whose they are.
+    let both = kitbag(a.path(), state.path(), &["restore", "--backend", "bw"]);
+    assert!(both.contains("belong to another machine"), "{both}");
+    assert!(both.contains("ssh:id_ed25519@box-b"), "{both}");
+
+    // And A still has A's key.
+    let here = std::fs::read_to_string(a.path().join(".ssh/id_ed25519")).unwrap();
+    assert!(here.contains("AAAAkeyofa"), "A's own key was written over");
+    assert!(!here.contains("AAAAkeyofb"), "B's key landed on A");
+}
+
+#[test]
+fn an_item_that_names_no_machine_is_taken_by_anyone() {
+    // Almost everything is like this, and the new field must not change it.
+    let (a, state) = machine("scopes = [\"personal\"]\n\n[[track]]\npath = \"~/.envs/*.env\"\n");
+    kitbag(a.path(), state.path(), &["push", "--backend", "bw"]);
+
+    let b = tempfile::tempdir().expect("home");
+    std::fs::create_dir_all(b.path().join(".envs")).unwrap();
+    std::fs::write(
+        b.path().join("machine.toml"),
+        "machine = \"somewhere-else\"\nscopes = [\"personal\"]\n\n[[track]]\npath = \"~/.envs/*.env\"\n",
+    )
+    .unwrap();
+
+    let out = kitbag(b.path(), state.path(), &["restore", "--backend", "bw"]);
+    assert!(out.contains("1 written"), "{out}");
+    assert!(b.path().join(".envs/one.env").exists(), "{out}");
+}

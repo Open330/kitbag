@@ -124,6 +124,7 @@ mod tests {
             source: crate::collect::Source::File(PathBuf::from("/x")),
             volatile: false,
             platform: Vec::new(),
+            machine: None,
         }
     }
 

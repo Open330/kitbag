@@ -639,6 +639,9 @@ pub fn restore(
     let mut held: Vec<(String, State)> = Vec::new();
     // This machine is ahead on these; they are a push's business.
     let mut ahead: Vec<String> = Vec::new();
+    // Another machine's own, kept in the store for that machine.
+    let mut theirs: Vec<String> = Vec::new();
+    let this_machine = config.machine_name();
     let here = kitbag_core::this_platform();
 
     progress.say("reading what the store holds");
@@ -665,6 +668,16 @@ pub fn restore(
         // anything is fetched.
         if config.skips(name) {
             kept_back.push(listing.name.clone());
+            continue;
+        }
+        // Another machine's, by name. Writing it here would put two machines
+        // on one key, which is what naming it after a machine prevented.
+        if listing
+            .machine
+            .as_deref()
+            .is_some_and(|m| m != this_machine.as_str())
+        {
+            theirs.push(listing.name.clone());
             continue;
         }
         // A macOS keychain, or a bundle addressed to ~/Library, is not state
@@ -754,6 +767,10 @@ pub fn restore(
         }
         if !envelope.belongs_on(here) {
             elsewhere.push(listing.name.clone());
+            continue;
+        }
+        if !envelope.belongs_to(&this_machine) {
+            theirs.push(listing.name.clone());
             continue;
         }
 
@@ -856,6 +873,16 @@ pub fn restore(
             kept_back.len()
         );
         for name in &kept_back {
+            println!("  · {name}");
+        }
+    }
+    if !theirs.is_empty() {
+        println!();
+        println!(
+            "  {} belong to another machine and stay in the store for it:",
+            theirs.len()
+        );
+        for name in &theirs {
             println!("  · {name}");
         }
     }

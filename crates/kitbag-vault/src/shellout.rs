@@ -96,6 +96,7 @@ impl Backend for Pass {
                     fingerprint: None,
                     scope: None,
                     platform: None,
+                    machine: None,
                 })
             })
             .collect())
@@ -208,6 +209,7 @@ impl Backend for Op {
                     fingerprint: None,
                     scope: None,
                     platform: None,
+                    machine: None,
                 })
             })
             .collect())
