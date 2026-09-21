@@ -12,6 +12,8 @@
 
 use std::process::Command;
 
+use kitbag_core::exec::{machine_path, machine_shell};
+
 /// One thing a manager installed.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Program {
@@ -58,16 +60,20 @@ pub const MAGIC: &str = "kitbag/programs 1";
 pub const SCRIPT: &str = "script";
 
 fn run(program: &str, args: &[&str]) -> Option<String> {
-    let out = Command::new(program).args(args).output().ok()?;
+    // With a PATH that knows where a user's own programs live: what is
+    // installed on this machine is not a fact about the caller's shell.
+    let out = Command::new(program)
+        .args(args)
+        .env("PATH", machine_path())
+        .output()
+        .ok()?;
     out.status
         .success()
         .then(|| String::from_utf8_lossy(&out.stdout).to_string())
 }
 
 fn have(program: &str) -> bool {
-    Command::new("sh")
-        .arg("-c")
-        .arg(format!("command -v {program} >/dev/null 2>&1"))
+    machine_shell(&format!("command -v {program} >/dev/null 2>&1"))
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
@@ -301,9 +307,7 @@ pub fn declared(
 /// Is it already on this machine? Asked with whatever test the list carries,
 /// and `command -v <name>` when it carries none.
 pub fn is_here(p: &Program) -> bool {
-    Command::new("sh")
-        .arg("-c")
-        .arg(p.presence_test())
+    machine_shell(&p.presence_test())
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
@@ -313,7 +317,7 @@ pub fn is_here(p: &Program) -> bool {
 /// version. `uv --version` says `uv 0.4.9`; the interesting half is the
 /// second word, and which word that is differs per program.
 fn version_in_output(command: &str) -> Option<String> {
-    let out = Command::new("sh").arg("-c").arg(command).output().ok()?;
+    let out = machine_shell(command).output().ok()?;
     if !out.status.success() {
         return None;
     }

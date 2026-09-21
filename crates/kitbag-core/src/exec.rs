@@ -25,6 +25,52 @@ pub fn shell(command: &str) -> Command {
     c
 }
 
+/// Like [`shell`], and with the directories a login shell would have added.
+///
+/// For the questions that are about the machine rather than about the caller.
+/// What is installed here does not change because the command arrived over
+/// ssh — but a non-interactive shell has none of the profile's PATH, so
+/// `command -v claude` says no on a machine that has it, and a list of what is
+/// installed comes out different depending on how it was asked for.
+pub fn machine_shell(command: &str) -> Command {
+    let mut c = Command::new("sh");
+    c.arg("-c").arg(command).env("PATH", machine_path());
+    c
+}
+
+/// The `PATH` those questions are asked with.
+///
+/// Given out on its own so a command with arguments can keep them as
+/// arguments: joining a program and its arguments into a shell line to get
+/// this would break the first one that contains a space.
+pub fn machine_path() -> String {
+    let mut path = std::env::var("PATH").unwrap_or_default();
+    // Last first: each goes on the front, so the earliest named ends up first.
+    for dir in usual_dirs().iter().rev() {
+        path = with_front(dir, &path);
+    }
+    path
+}
+
+/// Where a user's own programs go, on every machine in this arrangement.
+/// Deliberately a short list of conventions rather than a shell's whole
+/// profile: reading somebody's rc files to answer this would run them.
+fn usual_dirs() -> Vec<String> {
+    let mut dirs: Vec<String> = Vec::new();
+    if let Some(dir) = own_dir() {
+        dirs.push(dir);
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        let home = std::path::PathBuf::from(home);
+        for rest in [".local/bin", "bin", ".cargo/bin"] {
+            if let Some(p) = home.join(rest).to_str() {
+                dirs.push(p.to_string());
+            }
+        }
+    }
+    dirs
+}
+
 /// Where this executable lives, if the OS will say.
 fn own_dir() -> Option<String> {
     let exe = std::env::current_exe().ok()?;
@@ -66,6 +112,15 @@ mod tests {
             with_front("/opt/kit", "/usr/bin:/opt/kit:/bin"),
             "/usr/bin:/opt/kit:/bin"
         );
+    }
+
+    #[test]
+    fn several_directories_keep_the_order_they_were_named_in() {
+        let mut path = "/usr/bin".to_string();
+        for dir in ["/first", "/second", "/third"].iter().rev() {
+            path = with_front(dir, &path);
+        }
+        assert_eq!(path, "/first:/second:/third:/usr/bin");
     }
 
     #[test]
