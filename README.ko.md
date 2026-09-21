@@ -143,7 +143,7 @@ $ kitbag programs
 kitbag/programs 1
 brew	ripgrep
 cask	ghostty
-cargo	kitbag	0.11.0
+cargo	kitbag	0.13.0
 npm	@bitwarden/cli	2026.8.0
 rustup	stable-aarch64-apple-darwin
 ```
@@ -153,12 +153,44 @@ rustup	stable-aarch64-apple-darwin
 괜찮습니다. 목록은 *없어서는 안 되는 것*입니다. 다룰 줄 모르는 관리자는
 추측하지 않고 그렇다고 말합니다.
 
+필요한 게 애초에 관리자에 없었다면 얘기가 달라집니다. `rustup`, `uv`,
+`nvm`, 그리고 남의 설치 스크립트마다 들어있는 `curl … | sh` — 어떤 패키지
+목록도 설명해주지 않는 기계의 5분의 1입니다. 툴체인이 빠진 목록으로는
+기계를 다시 세울 수 없으니, 기계가 직접 선언할 수 있습니다:
+
+```toml
+[[program]]
+name = "uv"
+install = "curl -LsSf https://astral.sh/uv/install.sh | sh"
+version_from = "uv --version"     # 선택; 출력에서 버전을 읽습니다
+present = "uv --version"          # 선택; 기본값은 `command -v uv`
+```
+
+**실제로 있을 때만** 기록됩니다 — 아무도 실행하지 않은 선언은 사실이 아니라
+계획입니다. 설치 줄은 항목과 함께 이동하므로, 다시 세워지는 기계는 아직
+가지고 있지도 않은 설정 파일이 아니라 저장소에서 설치법을 배웁니다. kitbag은
+그 줄을 실행하기 전에 먼저 보여줍니다. 저장소에서 나온 명령은 여전히
+저장소에서 나온 명령이니까요.
+
+다른 기계의 목록도 읽을 수 있습니다. 베끼고 싶은 기계가 죽은 그 기계일 때
+정확히 필요한 기능입니다:
+
+```console
+$ kitbag programs --list
+jiun-mbp                     programs@jiun-mbp
+june-mbp                     programs@june-mbp
+
+$ kitbag programs --from jiun-mbp              # 읽기
+$ kitbag programs --from jiun-mbp --restore    # 또는 그 기계가 되기
+```
+
 추적 항목으로는 다른 명령 쌍과 똑같습니다:
 
 ```toml
 [[track]]
 name = "programs"
 scope = "personal"
+per_machine = true
 command = { export = "kitbag programs", restore = "kitbag programs --restore" }
 ```
 

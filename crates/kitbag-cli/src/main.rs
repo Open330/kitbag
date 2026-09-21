@@ -165,7 +165,15 @@ enum Command {
 
     /// What is installed here, written down — or put back from that writing
     Programs {
-        /// Read a list on stdin and install what is missing
+        /// Read the list another machine stored, by its name
+        #[arg(long, value_name = "MACHINE")]
+        from: Option<String>,
+
+        /// Which machines have written a list
+        #[arg(long)]
+        list: bool,
+
+        /// Install what is missing, from stdin or from `--from`
         #[arg(long)]
         restore: bool,
 
@@ -274,7 +282,19 @@ fn main() -> Result<()> {
         Command::Lint { ref paths } => check::lint(paths, cli.json)?,
         Command::Diff { ref only } => run::diff(cli.backend.as_deref(), only, colour)?,
         Command::Resolve => run::resolve(cli.backend.as_deref(), wanted, colour)?,
-        Command::Programs { restore, dry_run } => run::programs(restore, dry_run, colour)?,
+        Command::Programs {
+            ref from,
+            list,
+            restore,
+            dry_run,
+        } => run::programs(
+            cli.backend.as_deref(),
+            from.as_deref(),
+            list,
+            restore,
+            dry_run,
+            colour,
+        )?,
         Command::Push { dry_run, ref only } => run::push(
             cli.backend.as_deref(),
             wanted,

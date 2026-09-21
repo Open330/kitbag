@@ -168,7 +168,7 @@ $ kitbag programs
 kitbag/programs 1
 brew	ripgrep
 cask	ghostty
-cargo	kitbag	0.11.0
+cargo	kitbag	0.13.0
 npm	@bitwarden/cli	2026.8.0
 rustup	stable-aarch64-apple-darwin
 ```
@@ -178,12 +178,44 @@ Seventy-one of those is a kilobyte. Put it back with `kitbag programs
 allowed to have more than the list; the list is what it must not lack. A
 manager it cannot drive is named rather than guessed at.
 
+Which is fine until the thing you need was never in a manager. `rustup`, `uv`,
+`nvm`, and every `curl … | sh` in somebody's setup script are the fifth of a
+machine no package list will ever describe, and a list that omits the
+toolchain is not one you can rebuild from. So a machine may declare them:
+
+```toml
+[[program]]
+name = "uv"
+install = "curl -LsSf https://astral.sh/uv/install.sh | sh"
+version_from = "uv --version"     # optional; the version is read from its output
+present = "uv --version"          # optional; defaults to `command -v uv`
+```
+
+It is written out only if it is actually there — a declaration nobody has acted
+on is a plan, not a fact — and the line travels with the list, so the machine
+being rebuilt learns how to install it from the store rather than from a config
+it does not have yet. kitbag prints that line before running it, because a
+command out of a store is still a command out of a store.
+
+The other machines' lists are readable too, which is the point when the machine
+you want to copy is the one that died:
+
+```console
+$ kitbag programs --list
+jiun-mbp                     programs@jiun-mbp
+june-mbp                     programs@june-mbp
+
+$ kitbag programs --from jiun-mbp              # read it
+$ kitbag programs --from jiun-mbp --restore    # or become it
+```
+
 As a tracked item it is a command pair like any other:
 
 ```toml
 [[track]]
 name = "programs"
 scope = "personal"
+per_machine = true
 command = { export = "kitbag programs", restore = "kitbag programs --restore" }
 ```
 

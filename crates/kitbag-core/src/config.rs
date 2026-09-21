@@ -33,6 +33,34 @@ pub struct Config {
     /// is the same mistake from the other end.
     #[serde(default)]
     pub skip: Vec<String>,
+    /// Things no package manager here installed, and how to install them
+    /// again. The escape hatch, and deliberately one: four fifths of what a
+    /// machine holds is a manager's business, and the rest is other people's
+    /// installers.
+    #[serde(default, rename = "program")]
+    pub programs: Vec<DeclaredProgram>,
+}
+
+/// A program this machine declares, because nothing can be asked about it.
+///
+/// `rustup`, `uv`, `nvm` and every `curl … | sh` in a settings repository are
+/// this shape: a name, a line that installs it, and no manager that will ever
+/// list it. Recording the line is the only way the list can be complete.
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+pub struct DeclaredProgram {
+    pub name: String,
+    /// The shell line that installs it. Travels with the list, and is printed
+    /// before it runs: a command out of the store is still a command out of
+    /// the store.
+    pub install: String,
+    /// What to run to learn the version, when there is one worth recording.
+    /// The first thing on its output that looks like a version is taken.
+    #[serde(default)]
+    pub version_from: Option<String>,
+    /// How to tell it is already here. Defaults to `command -v <name>`, which
+    /// is right whenever the name is the command.
+    #[serde(default)]
+    pub present: Option<String>,
 }
 
 /// The short hostname, which is what the machines in this arrangement are

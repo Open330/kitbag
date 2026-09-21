@@ -163,7 +163,13 @@ Four more that the first four machines added:
   architecture, and still available from whoever published them. What is worth
   keeping is `manager, name, version`; a restore asks the manager for it again.
   Nothing is ever uninstalled — the list is what a machine must not lack, not
-  what it may not exceed.
+  what it may not exceed. What no manager will ever list — `rustup`, `uv`, every
+  `curl … | sh` — is declared with the line that installs it, and that line
+  travels with the list, because the machine that has to run it is the one
+  being rebuilt.
+- **A declaration is not an installation.** A declared program is written into
+  the list only if it is actually on the machine. Otherwise the list stops
+  describing what is here and starts describing what somebody intended.
 
 ### 5.1 Three-way, because two-way cannot say who moved
 
@@ -457,7 +463,9 @@ is still bash.
    modules of a working bash installer were classified line by line. Roughly
    four fifths is data once six providers exist; the imperative fifth is almost
    entirely *other people's installers* (rustup, uv, nvm), which belong behind
-   an escape hatch permanently rather than in a language of our own.
+   an escape hatch permanently rather than in a language of our own. That hatch
+   is `[[program]]`: a name and the line that installs it, recorded in the
+   machine's own config and carried with the list.
 2. **Where does the public/private line fall for recipes?** A work machine's
    recipe list may itself be sensitive. Probably: recipes public, the machine's
    selection private.

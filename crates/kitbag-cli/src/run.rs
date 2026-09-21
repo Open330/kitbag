@@ -1810,16 +1810,75 @@ pub fn resolve(backend: Option<&str>, wanted: Option<Wanted>, colour: Colour) ->
 ///
 /// Putting it back installs what is missing and removes nothing. A machine is
 /// allowed to have more than the list; the list is what it must not lack.
-pub fn programs(restore: bool, dry_run: bool, colour: Colour) -> Result<()> {
+pub fn programs(
+    backend: Option<&str>,
+    from: Option<&str>,
+    list: bool,
+    restore: bool,
+    dry_run: bool,
+    colour: Colour,
+) -> Result<()> {
     use kitbag_providers::programs;
 
-    if !restore {
-        print!("{}", programs::write(&programs::installed()));
+    if list {
+        let store = open_store(backend)?;
+        let mut names: Vec<String> = store
+            .list()?
+            .into_iter()
+            .map(|l| l.name)
+            .filter(|n| n == "programs" || n.starts_with("programs@"))
+            .collect();
+        names.sort();
+        println!();
+        if names.is_empty() {
+            println!("  No machine has written its list yet.");
+            println!("  kitbag push sends this one's.");
+            return Ok(());
+        }
+        for name in &names {
+            let whose = name.strip_prefix("programs@").unwrap_or("this machine");
+            println!("  {whose:<28} {name}");
+        }
+        println!();
+        println!(
+            "  {} list(s). kitbag programs --from <machine> reads one.",
+            names.len()
+        );
         return Ok(());
     }
 
-    let mut text = String::new();
-    std::io::Read::read_to_string(&mut std::io::stdin(), &mut text)?;
+    // Where the list comes from: another machine's, standard input, or this
+    // machine itself. Only the last one is a question about the machine; the
+    // other two are a question about the store.
+    let text = match (from, restore) {
+        (Some(whose), _) => {
+            let store = open_store(backend)?;
+            let name = if whose.contains('@') || whose == "programs" {
+                whose.to_string()
+            } else {
+                format!("programs@{whose}")
+            };
+            let envelope = store.get(&name).with_context(|| {
+                format!("{name}: no such list — `kitbag programs --list` says which exist")
+            })?;
+            String::from_utf8_lossy(&envelope.payload).to_string()
+        }
+        (None, true) => {
+            let mut text = String::new();
+            std::io::Read::read_to_string(&mut std::io::stdin(), &mut text)?;
+            text
+        }
+        (None, false) => {
+            print!("{}", programs::write(&here_and_declared()?));
+            return Ok(());
+        }
+    };
+
+    if !restore {
+        print!("{text}");
+        return Ok(());
+    }
+
     let wanted = programs::read(&text);
     if wanted.is_empty() {
         println!();
@@ -1827,9 +1886,10 @@ pub fn programs(restore: bool, dry_run: bool, colour: Colour) -> Result<()> {
         return Ok(());
     }
 
-    let here: std::collections::BTreeSet<(String, String)> = programs::installed()
-        .into_iter()
-        .map(|p| (p.manager, p.name))
+    let mine = here_and_declared()?;
+    let here: std::collections::BTreeSet<(String, String)> = mine
+        .iter()
+        .map(|p| (p.manager.clone(), p.name.clone()))
         .collect();
 
     let progress = ui::Progress::new(colour);
@@ -1840,7 +1900,7 @@ pub fn programs(restore: bool, dry_run: bool, colour: Colour) -> Result<()> {
 
     println!();
     for p in &wanted {
-        if here.contains(&(p.manager.clone(), p.name.clone())) {
+        if here.contains(&(p.manager.clone(), p.name.clone())) || already_here(p) {
             already += 1;
             continue;
         }
@@ -1848,11 +1908,23 @@ pub fn programs(restore: bool, dry_run: bool, colour: Colour) -> Result<()> {
             unknown.push(format!("{}:{}", p.manager, p.name));
             continue;
         };
+        // A declared program's install line came out of the store, and a line
+        // out of the store is named before it runs — the same rule the restore
+        // commands follow. The rest are argv this tool built itself.
+        let shown = if p.manager == kitbag_providers::programs::SCRIPT {
+            format!("`{}`  (from the list)", p.install)
+        } else {
+            argv.join(" ")
+        };
         if dry_run {
             progress.clear();
-            println!("  + {:<28} {}", p.name, argv.join(" "));
+            println!("  + {:<28} {shown}", p.name);
             installed += 1;
             continue;
+        }
+        if p.manager == kitbag_providers::programs::SCRIPT {
+            progress.clear();
+            println!("  + {:<28} {shown}", p.name);
         }
         progress.say(format!("installing {}", p.name));
         let out = std::process::Command::new(&argv[0])
@@ -1903,6 +1975,36 @@ pub fn programs(restore: bool, dry_run: bool, colour: Colour) -> Result<()> {
         bail!("{} program(s) did not install", failed.len());
     }
     Ok(())
+}
+
+/// What the managers admit to, plus what this machine declared and actually
+/// has. A declaration that has never been acted on is a plan, not a fact, so
+/// it stays out of a list of what is installed.
+fn here_and_declared() -> Result<Vec<kitbag_providers::programs::Program>> {
+    use kitbag_providers::programs;
+    let config = Config::load_or_default(&config_path())?;
+    let mut all = programs::installed();
+    for d in &config.programs {
+        if let Some(p) = programs::declared(
+            &d.name,
+            &d.install,
+            d.version_from.as_deref(),
+            d.present.as_deref(),
+        ) {
+            all.push(p);
+        }
+    }
+    all.sort();
+    all.dedup();
+    Ok(all)
+}
+
+/// Is a program from somebody else's list already here? Asked only of the
+/// declared ones: a manager's own entries are answered by asking the manager,
+/// and these have no manager to ask. The test travels with the item, so a
+/// program whose command is not its name is not reinstalled every restore.
+fn already_here(p: &kitbag_providers::programs::Program) -> bool {
+    p.manager == kitbag_providers::programs::SCRIPT && kitbag_providers::programs::is_here(p)
 }
 
 #[cfg(test)]
