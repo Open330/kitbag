@@ -226,11 +226,7 @@ fn collect_command(track: &Track, exported: &crate::config::Exported, out: &mut 
         return;
     }
 
-    match std::process::Command::new("sh")
-        .arg("-c")
-        .arg(&exported.export)
-        .output()
-    {
+    match crate::exec::shell(&exported.export).output() {
         Ok(o) if o.status.success() && !o.stdout.is_empty() => out.items.push(Item {
             name,
             scope,

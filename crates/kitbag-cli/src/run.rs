@@ -1047,11 +1047,9 @@ fn place(dest: &Path, payload: &[u8]) -> Result<Option<PathBuf>> {
 /// Hand a payload to a command on its stdin.
 fn pipe_into(command: &str, payload: &[u8]) -> Result<()> {
     use std::io::Write;
-    use std::process::{Command, Stdio};
+    use std::process::Stdio;
 
-    let mut child = Command::new("sh")
-        .arg("-c")
-        .arg(command)
+    let mut child = kitbag_core::exec::shell(command)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
