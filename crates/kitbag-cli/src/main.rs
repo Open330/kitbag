@@ -141,18 +141,34 @@ enum Command {
         owner: Option<String>,
     },
 
+    /// What differs between this machine and the store, without the values
+    #[command(visible_alias = "changed")]
+    Diff {
+        /// Only these items, by name
+        #[arg(value_name = "NAME")]
+        only: Vec<String>,
+    },
+
     /// Send tracked state to the store
     Push {
         /// Say what would be sent and stop
         #[arg(long)]
         dry_run: bool,
+
+        /// Only these items, by name — for resolving one at a time
+        #[arg(long, value_name = "NAME", num_args = 1..)]
+        only: Vec<String>,
     },
 
     /// Write tracked state back onto this machine
     Restore {
-        /// Say what would be written and stop
+        /// Say what would be sent and stop
         #[arg(long)]
         dry_run: bool,
+
+        /// Only these items, by name — for resolving one at a time
+        #[arg(long, value_name = "NAME", num_args = 1..)]
+        only: Vec<String>,
     },
 
     /// Permissions, reachability, unscoped files, orphans in the store
@@ -231,9 +247,12 @@ fn main() -> Result<()> {
             TrustCmd::Revoke { targets, from } => trust::revoke_cmd(targets, from)?,
         },
         Command::Lint { ref paths } => check::lint(paths, cli.json)?,
-        Command::Push { dry_run } => run::push(cli.backend.as_deref(), wanted, dry_run, colour)?,
-        Command::Restore { dry_run } => {
-            run::restore(cli.backend.as_deref(), wanted, dry_run, colour)?
+        Command::Diff { ref only } => run::diff(cli.backend.as_deref(), only, colour)?,
+        Command::Push { dry_run, ref only } => {
+            run::push(cli.backend.as_deref(), wanted, dry_run, only, colour)?
+        }
+        Command::Restore { dry_run, ref only } => {
+            run::restore(cli.backend.as_deref(), wanted, dry_run, only, colour)?
         }
         other => {
             println!("  kitbag {} is not implemented yet.", name_of(&other));
@@ -257,6 +276,7 @@ fn name_of(c: &Command) -> &'static str {
         Command::Apply { .. } => "apply",
         Command::Discover { .. } => "discover",
         Command::Track { .. } => "track",
+        Command::Diff { .. } => "diff",
         Command::Push { .. } => "push",
         Command::Restore { .. } => "restore",
         Command::Doctor => "doctor",

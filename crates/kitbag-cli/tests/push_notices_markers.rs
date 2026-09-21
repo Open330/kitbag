@@ -132,3 +132,72 @@ fn updating_one_attachment_item_costs_five_calls() {
         "one sync, one listing, and three writes that each have to happen"
     );
 }
+
+#[test]
+fn diff_says_which_keys_differ_and_never_what_they_hold() {
+    // The case this was built for: one machine held two of these keys and the
+    // store held four, and `status` could only say "changed". Finding out took
+    // reading both files by hand over ssh.
+    let (home, state) = machine(PLAIN);
+    std::fs::write(
+        home.path().join(".envs/one.env"),
+        "# scope: personal\nDOCS_HOST=a\nDOCS_USER=secretuser\nDOCS_ROOT=r\nDOCS_URL=b\n",
+    )
+    .unwrap();
+    kitbag(home.path(), state.path(), &["push", "--backend", "bw"]);
+
+    std::fs::write(
+        home.path().join(".envs/one.env"),
+        "# scope: personal\nDOCS_HOST=a\nDOCS_URL=elsewhere\n",
+    )
+    .unwrap();
+
+    let out = kitbag(home.path(), state.path(), &["diff", "--backend", "bw"]);
+    assert!(out.contains("only there:"), "{out}");
+    assert!(
+        out.contains("DOCS_USER") && out.contains("DOCS_ROOT"),
+        "{out}"
+    );
+    assert!(out.contains("differ:") && out.contains("DOCS_URL"), "{out}");
+    assert!(
+        !out.contains("secretuser") && !out.contains("elsewhere"),
+        "a value reached the report:\n{out}"
+    );
+}
+
+#[test]
+fn only_resolves_one_item_and_leaves_the_rest() {
+    // A glob, so both files are tracked — PLAIN names one file by hand.
+    let (home, state) = machine("scopes = [\"personal\"]\n\n[[track]]\npath = \"~/.envs/*.env\"\n");
+    std::fs::write(
+        home.path().join(".envs/two.env"),
+        "# scope: personal\nB=1\n",
+    )
+    .unwrap();
+    kitbag(home.path(), state.path(), &["push", "--backend", "bw"]);
+
+    std::fs::write(
+        home.path().join(".envs/one.env"),
+        "# scope: personal\nA=2\n",
+    )
+    .unwrap();
+    std::fs::write(
+        home.path().join(".envs/two.env"),
+        "# scope: personal\nB=2\n",
+    )
+    .unwrap();
+
+    let sent = kitbag(
+        home.path(),
+        state.path(),
+        &["push", "--backend", "bw", "--only", "env:one"],
+    );
+    assert!(sent.contains("1 sent"), "{sent}");
+
+    let left = kitbag(home.path(), state.path(), &["diff", "--backend", "bw"]);
+    assert!(
+        left.contains("env:two"),
+        "the other one is untouched:\n{left}"
+    );
+    assert!(!left.contains("env:one"), "{left}");
+}

@@ -406,6 +406,7 @@ pub fn push(
     backend: Option<&str>,
     wanted: Option<Wanted>,
     dry_run: bool,
+    only: &[String],
     colour: Colour,
 ) -> Result<()> {
     let home = home();
@@ -426,6 +427,7 @@ pub fn push(
     let total = items
         .iter()
         .filter(|i| wanted.accepts(&i.scope) && !config.skips(&i.name))
+        .filter(|i| only.is_empty() || only.iter().any(|n| n == &i.name))
         .count();
     let mut at = 0usize;
     // Named by this machine as its own business, in both directions.
@@ -441,6 +443,11 @@ pub fn push(
     println!();
     for item in &items {
         if !wanted.accepts(&item.scope) {
+            continue;
+        }
+        // Named on the command line: this run is about resolving one item,
+        // and everything else stays where it is.
+        if !only.is_empty() && !only.iter().any(|n| n == &item.name) {
             continue;
         }
         if config.skips(&item.name) {
@@ -521,6 +528,7 @@ pub fn restore(
     backend: Option<&str>,
     wanted: Option<Wanted>,
     dry_run: bool,
+    only: &[String],
     colour: Colour,
 ) -> Result<()> {
     let home = home();
@@ -575,6 +583,10 @@ pub fn restore(
         // scope in its listing can have an item turned away without the item
         // ever being fetched.
         if listing.scope.as_ref().is_some_and(|s| !wanted.accepts(s)) {
+            continue;
+        }
+        // Named on the command line: this run is about resolving one item.
+        if !only.is_empty() && !only.iter().any(|n| n == name) {
             continue;
         }
         // Named by this machine as its own business. Cheap, and before
@@ -987,6 +999,106 @@ fn append_tracks(cfg_path: &Path, found: &[Finding], home: &Path) -> Result<()> 
         current.push_str(&f.as_toml(home));
     }
     std::fs::write(cfg_path, current)?;
+    Ok(())
+}
+
+/// What differs between this machine and the store, item by item.
+///
+/// `status` says an item changed. Acting on that means knowing what changed,
+/// and until now that meant reading both sides by hand. This reads them and
+/// says what it found — key names, counts, sizes, hashes — and stops there,
+/// because which side should win is not a thing a tool can know.
+pub fn diff(backend: Option<&str>, only: &[String], colour: Colour) -> Result<()> {
+    use kitbag_core::difference::{describe, Difference};
+
+    let home = home();
+    let config = Config::load_or_default(&config_path())?.with_env_skips();
+    let Collected { items, .. } = collect(&config, &home);
+
+    let progress = ui::Progress::new(colour);
+    progress.say("reading what the store holds");
+    let store = open_store(backend)?;
+    let listing: BTreeMap<String, Option<String>> = store
+        .list()?
+        .into_iter()
+        .map(|l| (l.name, l.fingerprint))
+        .collect();
+    progress.clear();
+
+    let wanted: Vec<&kitbag_core::Item> = items
+        .iter()
+        .filter(|i| only.is_empty() || only.iter().any(|n| n == &i.name))
+        .collect();
+
+    let mut shown = 0usize;
+    println!();
+    for item in wanted {
+        let Some(there_print) = listing.get(&item.name) else {
+            println!("  + {:<28} not in the store", item.name);
+            shown += 1;
+            continue;
+        };
+        let here_print = kitbag_core::collect::envelope_for(item, &home).fingerprint();
+        if there_print.as_deref() == Some(here_print.as_str()) {
+            continue;
+        }
+
+        progress.say(format!("reading {}", item.name));
+        let theirs = store.get(&item.name)?;
+        progress.clear();
+
+        let what = describe(&item.payload, &theirs.payload);
+        if what.is_none() {
+            // Bytes equal, envelope not: a marker moved, not a value.
+            println!("  ~ {:<28} same contents, different markers", item.name);
+            shown += 1;
+            continue;
+        }
+
+        println!("  ~ {}", item.name);
+        match what {
+            Difference::Keys {
+                only_here,
+                only_there,
+                differing,
+                here_lines,
+                there_lines,
+            } => {
+                println!("      here   {here_lines} lines");
+                println!("      store  {there_lines} lines");
+                if !only_here.is_empty() {
+                    println!("      only here:   {}", only_here.join(" "));
+                }
+                if !only_there.is_empty() {
+                    println!("      only there:  {}", only_there.join(" "));
+                }
+                if !differing.is_empty() {
+                    println!("      differ:      {}", differing.join(" "));
+                }
+            }
+            Difference::Opaque {
+                here_bytes,
+                there_bytes,
+                here_hash,
+                there_hash,
+            } => {
+                println!("      here   {here_bytes} bytes  {}", &here_hash[..12]);
+                println!("      store  {there_bytes} bytes  {}", &there_hash[..12]);
+            }
+            Difference::None => unreachable!("handled above"),
+        }
+        shown += 1;
+    }
+
+    drop(progress);
+    println!();
+    if shown == 0 {
+        println!("  Nothing differs.");
+    } else {
+        println!("  {shown} item(s) differ. Which side should win is yours to say:");
+        println!("    kitbag restore --backend <name> --only <item>   take the store's");
+        println!("    kitbag push    --backend <name> --only <item>   send this machine's");
+    }
     Ok(())
 }
 

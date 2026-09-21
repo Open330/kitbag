@@ -295,7 +295,7 @@ const KEYS_SHOWN: usize = 12;
 /// is the exact failure this tool exists to avoid. Anything that does not look
 /// like an identifier, or that the rule set recognises as a secret, is not a
 /// name.
-fn is_a_name(key: &str) -> bool {
+pub(crate) fn is_a_name(key: &str) -> bool {
     !key.is_empty()
         && key.len() <= 40
         && key

@@ -6,6 +6,7 @@
 
 pub mod collect;
 pub mod config;
+pub mod difference;
 pub mod envelope;
 pub mod lint;
 pub mod marker;
