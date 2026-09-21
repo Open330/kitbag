@@ -199,6 +199,10 @@ enum Command {
         #[arg(long)]
         dry_run: bool,
 
+        /// Do not ask first
+        #[arg(long, short)]
+        yes: bool,
+
         /// Only these items, by name — for resolving one at a time
         #[arg(long, value_name = "NAME", num_args = 1..)]
         only: Vec<String>,
@@ -303,9 +307,11 @@ fn main() -> Result<()> {
             cli.jobs,
             colour,
         )?,
-        Command::Restore { dry_run, ref only } => {
-            run::restore(cli.backend.as_deref(), wanted, dry_run, only, colour)?
-        }
+        Command::Restore {
+            dry_run,
+            yes,
+            ref only,
+        } => run::restore(cli.backend.as_deref(), wanted, dry_run, yes, only, colour)?,
         other => {
             println!("  kitbag {} is not implemented yet.", name_of(&other));
             println!("  Implemented so far: status, plan, completions.");

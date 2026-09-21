@@ -219,6 +219,11 @@ per_machine = true
 command = { export = "kitbag programs", restore = "kitbag programs --restore" }
 ```
 
+Which is also why `kitbag restore` asks before it writes. Restoring files is
+recoverable — each one is backed up first. Installing software is not, so the
+whole command stops and asks once; `-y` answers in advance, and `--dry-run`
+says exactly what would happen and writes nothing.
+
 ## Three stores, and why
 
 A public dotfiles repository is safe only if it leaves out **the list of what

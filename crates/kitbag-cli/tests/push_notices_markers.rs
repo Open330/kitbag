@@ -233,7 +233,11 @@ fn one_side_moving_is_a_direction_not_a_question() {
     assert!(pushed.contains("newer in the store"), "{pushed}");
 
     // And taking it is not a question either.
-    let took = kitbag(b.path(), state.path(), &["restore", "--backend", "bw"]);
+    let took = kitbag(
+        b.path(),
+        state.path(),
+        &["restore", "--backend", "bw", "--yes"],
+    );
     assert!(took.contains("1 written"), "{took}");
     assert!(!took.contains("not settled"), "{took}");
 }
@@ -265,7 +269,11 @@ fn both_sides_moving_stops_and_says_so() {
         "nothing was written over:\n{pushed}"
     );
 
-    let took = kitbag(b.path(), state.path(), &["restore", "--backend", "bw"]);
+    let took = kitbag(
+        b.path(),
+        state.path(),
+        &["restore", "--backend", "bw", "--yes"],
+    );
     assert!(took.contains("not settled"), "{took}");
     assert!(took.contains("0 written"), "nor the other way:\n{took}");
 
@@ -360,7 +368,11 @@ fn four_machines_can_each_keep_their_own_key_and_still_have_it_backed_up() {
     assert!(sent_b.contains("ssh:id_ed25519@box-b"), "{sent_b}");
 
     // Both are kept, under names that say whose they are.
-    let both = kitbag(a.path(), state.path(), &["restore", "--backend", "bw"]);
+    let both = kitbag(
+        a.path(),
+        state.path(),
+        &["restore", "--backend", "bw", "--yes"],
+    );
     assert!(both.contains("belong to another machine"), "{both}");
     assert!(both.contains("ssh:id_ed25519@box-b"), "{both}");
 
@@ -384,7 +396,11 @@ fn an_item_that_names_no_machine_is_taken_by_anyone() {
     )
     .unwrap();
 
-    let out = kitbag(b.path(), state.path(), &["restore", "--backend", "bw"]);
+    let out = kitbag(
+        b.path(),
+        state.path(),
+        &["restore", "--backend", "bw", "--yes"],
+    );
     assert!(out.contains("1 written"), "{out}");
     assert!(b.path().join(".envs/one.env").exists(), "{out}");
 }
@@ -401,7 +417,11 @@ fn naming_it_after_a_machine_does_not_move_the_file() {
     // Take the key away and restore it: it has to come back to the default
     // path, not to anything with a machine name in it.
     std::fs::remove_file(a.path().join(".ssh/id_ed25519")).unwrap();
-    let out = kitbag(a.path(), state.path(), &["restore", "--backend", "bw"]);
+    let out = kitbag(
+        a.path(),
+        state.path(),
+        &["restore", "--backend", "bw", "--yes"],
+    );
 
     assert!(
         out.contains("~/.ssh/id_ed25519"),

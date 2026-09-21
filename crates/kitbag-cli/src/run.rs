@@ -401,6 +401,30 @@ fn confirm(pending: usize) -> Result<bool> {
     Ok(matches!(answer.trim(), "y" | "Y" | "yes"))
 }
 
+/// The one question `restore` asks. It writes over this machine's own files
+/// and runs the restore commands the store carries, and both of those are
+/// worth saying out loud before the first one happens.
+fn confirm_restore(held: usize) -> Result<bool> {
+    use std::io::{IsTerminal, Write};
+
+    println!();
+    println!("  The store holds {held} item(s) for this machine.");
+    println!("  Restoring writes over files here and runs the restore commands");
+    println!("  the store carries — which can install software.");
+    println!("  `kitbag restore --dry-run` says exactly what, and writes nothing.");
+
+    if !std::io::stdin().is_terminal() {
+        println!();
+        println!("  No terminal to ask in. Re-run with --yes.");
+        return Ok(false);
+    }
+    print!("\n  Go ahead? [y/N] ");
+    std::io::stdout().flush()?;
+    let mut answer = String::new();
+    std::io::stdin().read_line(&mut answer)?;
+    Ok(matches!(answer.trim(), "y" | "Y" | "yes"))
+}
+
 fn open_store(name: Option<&str>) -> Result<Box<dyn Backend + Send + Sync>> {
     let name = name.unwrap_or("bw");
     let kind: BackendKind = name.parse()?;
@@ -764,6 +788,7 @@ pub fn restore(
     backend: Option<&str>,
     wanted: Option<Wanted>,
     dry_run: bool,
+    yes: bool,
     only: &[String],
     colour: Colour,
 ) -> Result<()> {
@@ -824,6 +849,27 @@ pub fn restore(
     progress.say("reading what the store holds");
     let listings = store.list()?;
     let total = listings.len();
+
+    // Asked before anything is written, and once. `apply` has always confirmed
+    // and `restore` never did, which was defensible while restoring meant
+    // writing files — those are backed up first, and a backup can be put back.
+    // It stopped being defensible when a tracked `programs` item made
+    // `restore` able to install software: that reaches the network, takes
+    // minutes, and no backup undoes it.
+    //
+    // Not a plan, because building one means fetching every payload to find
+    // out — twice the calls, and every secret held twice as long for a
+    // question `--dry-run` already answers properly.
+    //
+    // Skipped for `--only`, where naming the item is the answer.
+    if !dry_run && !yes && only.is_empty() {
+        progress.clear();
+        if !confirm_restore(total)? {
+            println!();
+            println!("  Nothing was written.");
+            return Ok(());
+        }
+    }
 
     progress.clear();
     println!();

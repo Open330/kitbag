@@ -194,6 +194,11 @@ per_machine = true
 command = { export = "kitbag programs", restore = "kitbag programs --restore" }
 ```
 
+`kitbag restore`가 쓰기 전에 물어보는 이유이기도 합니다. 파일을 되돌리는 건
+되돌릴 수 있습니다 — 각각 먼저 백업하니까요. 소프트웨어 설치는 아닙니다.
+그래서 명령 전체가 한 번 멈추고 묻습니다. `-y`로 미리 답할 수 있고,
+`--dry-run`은 무슨 일이 일어날지 정확히 말하면서 아무것도 쓰지 않습니다.
+
 ## 세 개의 저장소, 그리고 그 이유
 
 공개 dotfiles 레포가 안전한 조건은 "비밀을 넣지 않는 것"이 아닙니다. **무엇이

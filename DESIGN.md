@@ -71,7 +71,7 @@ kitbag apply [--only pkg]     make it so
 kitbag discover               scan for personal state that is not tracked yet, and propose it
 kitbag track <path> --scope work [--owner acme]
 kitbag push [--only name…]    send tracked state to the store
-kitbag restore [--only name…] write it back here
+kitbag restore [--only name…] write it back here (asks first; -y to skip)
 kitbag diff [name…]           what differs from the store — shapes and names, never values
 kitbag resolve                settle, one at a time, what neither side can settle alone
 kitbag programs [--restore]   what is installed here, written down; or put back from that writing
@@ -82,6 +82,14 @@ kitbag trust                  the machines that may log in here (folds in ssh-tr
 Defaults that matter: `plan` is implied unless `apply`/`push`/`restore` is asked
 for, output is a tree grouped by scope, `--json` exists for every command, and
 no command ever prints a secret's value.
+
+`restore` asks before it writes, and `-y` answers in advance. It did not, once,
+and that was defensible while restoring meant writing files — those are backed
+up first and a backup can be put back. A `programs` item made restore able to
+install software, which reaches the network, takes minutes, and no backup
+undoes. What it does not do is print a plan to confirm against: building one
+means fetching every payload to find out, which is twice the calls and every
+secret held twice as long, for a question `--dry-run` already answers.
 
 Four global flags decide what a run touches: `--scope` (which scopes this
 machine takes this time), `--skip name,…` (items it keeps to itself, in both

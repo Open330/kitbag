@@ -170,7 +170,7 @@ platform = ["windows"]
     std::fs::remove_file(home.join(".envs/here.env")).unwrap();
     std::fs::remove_file(home.join(".envs/elsewhere.env")).unwrap();
 
-    let out = kitbag(home, state, &["restore", "--backend", "bw"]);
+    let out = kitbag(home, state, &["restore", "--backend", "bw", "--yes"]);
 
     assert!(out.contains("for another platform"), "{out}");
     assert!(
@@ -213,7 +213,11 @@ command = { export = "echo carried", restore = "cat > \"$HOME/came-back.txt\"" }
     )
     .unwrap();
 
-    let out = kitbag(fresh.path(), state.path(), &["restore", "--backend", "bw"]);
+    let out = kitbag(
+        fresh.path(),
+        state.path(),
+        &["restore", "--backend", "bw", "--yes"],
+    );
 
     assert!(
         out.contains("from the store"),
@@ -252,7 +256,7 @@ fn a_machine_keeps_what_it_says_it_keeps_in_both_directions() {
     // Now take both away and restore: the store never had `env:mine`, and even
     // if it did this machine would not take it.
     std::fs::remove_file(home.join(".envs/shared.env")).unwrap();
-    let back = kitbag(home, state, &["restore", "--backend", "bw"]);
+    let back = kitbag(home, state, &["restore", "--backend", "bw", "--yes"]);
     assert!(home.join(".envs/shared.env").exists(), "{back}");
 }
 
@@ -318,7 +322,7 @@ fn two_items_do_not_race_for_one_file() {
     kitbag(plain.path(), state, &["push", "--backend", "bw"]);
 
     std::fs::remove_file(home.join(".ssh/id_ed25519")).unwrap();
-    let out = kitbag(home, state, &["restore", "--backend", "bw"]);
+    let out = kitbag(home, state, &["restore", "--backend", "bw", "--yes"]);
 
     assert!(
         out.contains("already being written") || out.contains("both say they belong"),
@@ -374,4 +378,71 @@ fn kitbag_cli_place(target: &Path, body: &[u8]) -> std::path::PathBuf {
     std::fs::rename(target, &backup).unwrap();
     std::fs::write(target, body).unwrap();
     backup
+}
+
+#[test]
+fn a_restore_nobody_agreed_to_writes_nothing() {
+    // `apply` has always asked and `restore` never did, which was defensible
+    // while restoring meant writing files — those are backed up first. It
+    // stopped being so when a tracked `programs` item made a restore able to
+    // install software.
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    let (home, state) = (home.path(), state.path());
+
+    std::fs::create_dir_all(home.join(".envs")).unwrap();
+    std::fs::write(home.join(".envs/one.env"), "# scope: personal\nA=1\n").unwrap();
+    std::fs::write(
+        home.join("machine.toml"),
+        "scopes = [\"personal\"]\n\n[[track]]\npath = \"~/.envs/*.env\"\n",
+    )
+    .unwrap();
+    kitbag(home, state, &["push", "--backend", "bw"]);
+
+    // Gone from this machine, still in the store: a restore would put it back.
+    std::fs::remove_file(home.join(".envs/one.env")).unwrap();
+
+    let refused = kitbag(home, state, &["restore", "--backend", "bw"]);
+    assert!(refused.contains("Re-run with --yes"), "{refused}");
+    assert!(refused.contains("Nothing was written"), "{refused}");
+    assert!(
+        !home.join(".envs/one.env").exists(),
+        "a restore nobody agreed to put the file back"
+    );
+
+    // And it is still one flag away.
+    let done = kitbag(home, state, &["restore", "--backend", "bw", "--yes"]);
+    assert!(
+        home.join(".envs/one.env").exists(),
+        "--yes did not restore it:\n{done}"
+    );
+}
+
+#[test]
+fn naming_one_item_is_the_answer_to_the_question() {
+    // `--only` says which item and which direction. Asking again after that
+    // is asking somebody to repeat themselves.
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    let (home, state) = (home.path(), state.path());
+
+    std::fs::create_dir_all(home.join(".envs")).unwrap();
+    std::fs::write(home.join(".envs/one.env"), "# scope: personal\nA=1\n").unwrap();
+    std::fs::write(
+        home.join("machine.toml"),
+        "scopes = [\"personal\"]\n\n[[track]]\npath = \"~/.envs/*.env\"\n",
+    )
+    .unwrap();
+    kitbag(home, state, &["push", "--backend", "bw"]);
+    std::fs::remove_file(home.join(".envs/one.env")).unwrap();
+
+    let out = kitbag(
+        home,
+        state,
+        &["restore", "--backend", "bw", "--only", "env:one"],
+    );
+    assert!(
+        home.join(".envs/one.env").exists(),
+        "--only stopped to ask:\n{out}"
+    );
 }
