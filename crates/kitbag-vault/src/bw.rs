@@ -418,10 +418,17 @@ impl Backend for Bw {
         // already gone and one because the client threw.
         for old in replaced {
             if let Err(e) = self.call(&["delete", "attachment", &old, "--itemid", &id], None) {
+                let said = first_line(&e.to_string());
+                // An attachment that is not there is an attachment that has
+                // been removed. Saying so is a warning about a success, and it
+                // arrives in the middle of a progress line to do it. Anything
+                // else is still worth hearing.
+                if said.contains("was not found") || said.contains("not found") {
+                    continue;
+                }
                 eprintln!(
                     "  kitbag: {name} is up to date, but an old copy of its \
-                     attachment could not be removed: {}",
-                    first_line(&e.to_string())
+                     attachment could not be removed: {said}"
                 );
             }
         }

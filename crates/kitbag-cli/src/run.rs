@@ -450,6 +450,8 @@ pub fn push(
     let mut held: Vec<(String, State)> = Vec::new();
     // The store is ahead on these; they are a restore's business.
     let mut behind: Vec<String> = Vec::new();
+    // Refused mid-run, and not worth contesting: see the volatile note below.
+    let mut yielded: Vec<String> = Vec::new();
     // Decided, not yet written.
     let mut outgoing: Vec<(&kitbag_core::Item, State)> = Vec::new();
     progress.clear();
@@ -572,6 +574,20 @@ pub fn push(
                 failed.push((name, why));
                 continue;
             };
+
+            // Nobody can compare these bytes — that is what `volatile` means —
+            // so a copy that arrived from another machine four seconds ago is
+            // exactly as good as this one, and there is no prize for winning
+            // the argument. Four machines sending the same incomparable item
+            // on every push will collide forever otherwise, each refusal
+            // reported as a failure nobody can act on.
+            if item.volatile {
+                progress.clear();
+                println!("  ? {name:<28} another machine's copy landed first");
+                yielded.push(name);
+                continue;
+            }
+
             let state = kitbag_core::state::compare_against(item, &remote, &home, &ledger);
             if !state.is_decided() && only.is_empty() {
                 held.push((name, state));
@@ -628,6 +644,14 @@ pub fn push(
         if let Err(e) = ledger.save(&ledger_path()) {
             println!("  could not record what was exchanged: {e}");
         }
+    }
+    if !yielded.is_empty() {
+        println!(
+            "  {} left to another machine's copy: {}",
+            yielded.len(),
+            yielded.join(", ")
+        );
+        println!("  Nothing can compare those bytes, so whichever arrived is as good.");
     }
     if !behind.is_empty() {
         println!(

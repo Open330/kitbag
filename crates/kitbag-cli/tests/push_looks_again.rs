@@ -42,8 +42,15 @@ fn push(home: &Path, state: &Path) -> String {
 
 const PLAIN: &str = "scopes = [\"personal\"]\n\n[[track]]\npath = \"~/.envs/one.env\"\n";
 
+const VOLATILE: &str =
+    "scopes = [\"personal\"]\n\n[[track]]\npath = \"~/.envs/one.env\"\nvolatile = true\n";
+
 /// A machine holding one tracked file, already agreed with the store.
 fn settled() -> (tempfile::TempDir, tempfile::TempDir) {
+    settled_with(PLAIN)
+}
+
+fn settled_with(config: &str) -> (tempfile::TempDir, tempfile::TempDir) {
     let home = tempfile::tempdir().expect("home");
     let state = tempfile::tempdir().expect("state");
     std::fs::create_dir_all(home.path().join(".envs")).unwrap();
@@ -52,7 +59,7 @@ fn settled() -> (tempfile::TempDir, tempfile::TempDir) {
         "# scope: personal\nA=1\n",
     )
     .unwrap();
-    std::fs::write(home.path().join("machine.toml"), PLAIN).unwrap();
+    std::fs::write(home.path().join("machine.toml"), config).unwrap();
     push(home.path(), state.path());
     (home, state)
 }
@@ -107,4 +114,18 @@ fn what_is_reported_is_the_reason_and_not_node_complaining_about_punycode() {
     assert!(said.contains("out of date"), "{said}");
     assert!(!said.contains("punycode"), "{said}");
     assert!(!said.contains("DeprecationWarning"), "{said}");
+}
+
+#[test]
+fn an_item_nobody_can_compare_is_not_worth_arguing_over() {
+    // A volatile item is sent on every push, because no comparison can say it
+    // was not needed. Four machines doing that to one item collide by design,
+    // and there is nothing to win: whichever copy arrived is as good.
+    let (home, state) = settled_with(VOLATILE);
+    std::fs::write(state.path().join("stale-once"), "").unwrap();
+
+    let out = push(home.path(), state.path());
+    assert!(out.contains("another machine's copy landed first"), "{out}");
+    assert!(out.contains("left to another machine's copy"), "{out}");
+    assert!(!out.contains("sent, second time"), "{out}");
 }
