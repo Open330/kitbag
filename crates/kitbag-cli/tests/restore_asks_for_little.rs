@@ -104,11 +104,31 @@ fn a_file_that_differs_is_the_one_that_gets_fetched() {
 
     kitbag(home, state, &["push", "--backend", "bw"]);
 
-    // Local edit: now it differs from the store, so it has to be read.
+    // Local edit. The push above recorded what the two agreed on, so this
+    // machine is now ahead — and a plain restore refuses to write the store's
+    // older copy over it. That refusal is the point; naming the item is how a
+    // person says they have decided anyway.
     std::fs::write(home.join(".envs/big.env"), "# scope: personal\nB=changed\n").unwrap();
-    std::fs::write(state.join("calls.log"), "").expect("reset the log");
 
-    let out = kitbag(home, state, &["restore", "--backend", "bw", "--dry-run"]);
+    let refused = kitbag(home, state, &["restore", "--backend", "bw", "--dry-run"]);
+    assert!(
+        refused.contains("newer here, so not taken"),
+        "the local edit must not be silently written over:\n{refused}"
+    );
+
+    std::fs::write(state.join("calls.log"), "").expect("reset the log");
+    let out = kitbag(
+        home,
+        state,
+        &[
+            "restore",
+            "--backend",
+            "bw",
+            "--dry-run",
+            "--only",
+            "env:big",
+        ],
+    );
 
     assert!(out.contains("1 to write"), "{out}");
     assert_eq!(

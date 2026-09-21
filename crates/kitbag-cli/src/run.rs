@@ -7,7 +7,7 @@ use anyhow::{bail, Context, Result};
 use kitbag_catalog::{scan, Finding, Source};
 use kitbag_core::collect::{collect, Collected};
 use kitbag_core::recipe::Recipes;
-use kitbag_core::state::{compare, orphans, Remote, State};
+use kitbag_core::state::{orphans, Remote, State};
 use kitbag_core::{Config, Scope, Wanted};
 use kitbag_providers::{apply_recipe, plan_recipe, Action, Done, PackageManager, Step};
 use kitbag_vault::{Backend, BackendKind};
@@ -30,6 +30,9 @@ fn mark_of(state: State) -> Mark {
     match state {
         State::New => Mark::New,
         State::Changed => Mark::Changed,
+        State::Ahead => Mark::Ahead,
+        State::Behind => Mark::Behind,
+        State::Conflict => Mark::Conflict,
         State::Unchanged => Mark::Unchanged,
         State::Unknown => Mark::Unknown,
     }
@@ -47,6 +50,7 @@ pub fn status(
     let cfg_path = config_path();
     let config = Config::load_or_default(&cfg_path)?.with_env_skips();
     let wanted = wanted.unwrap_or_else(|| config.wanted());
+    let ledger = kitbag_core::ledger::Ledger::load(&ledger_path());
 
     let Collected { items, skipped } = collect(&config, &home);
 
@@ -76,7 +80,11 @@ pub fn status(
             held_back += 1;
             continue;
         }
-        let mark = compared.then(|| mark_of(compare(item, &remote, &home)));
+        let mark = compared.then(|| {
+            mark_of(kitbag_core::state::compare_against(
+                item, &remote, &home, &ledger,
+            ))
+        });
         groups
             .entry((item.scope.name().to_string(), item.owner.clone()))
             .or_default()
@@ -96,9 +104,12 @@ pub fn status(
                 "path": pretty(&i.path, &home),
                 "detail": i.detail(),
                 "taken": wanted.accepts(&i.scope),
-                "state": compared.then(|| match compare(i, &remote, &home) {
+                "state": compared.then(|| match kitbag_core::state::compare_against(i, &remote, &home, &ledger) {
                     State::New => "new",
                     State::Changed => "changed",
+                    State::Ahead => "ahead",
+                    State::Behind => "behind",
+                    State::Conflict => "conflict",
                     State::Unchanged => "unchanged",
                     State::Unknown => "unknown",
                 }),
@@ -414,6 +425,8 @@ pub fn push(
     let wanted = wanted.unwrap_or_else(|| config.wanted());
     let Collected { items, skipped } = collect(&config, &home);
 
+    let mut ledger = kitbag_core::ledger::Ledger::load(&ledger_path());
+
     let progress = ui::Progress::new(colour);
     progress.say("opening the store");
     let store = open_store(backend)?;
@@ -432,6 +445,10 @@ pub fn push(
     let mut at = 0usize;
     // Named by this machine as its own business, in both directions.
     let mut kept_back: Vec<String> = Vec::new();
+    // Differences this run refused to settle on its own.
+    let mut held: Vec<(String, State)> = Vec::new();
+    // The store is ahead on these; they are a restore's business.
+    let mut behind: Vec<String> = Vec::new();
     progress.clear();
 
     let mut sent = 0usize;
@@ -456,8 +473,34 @@ pub fn push(
         }
         at += 1;
         progress.say(format!("{} — {at}/{total}", item.name));
-        match compare(item, &remote, &home) {
+        let state = kitbag_core::state::compare_against(item, &remote, &home, &ledger);
+
+        // Named on the command line means the question has been answered, so a
+        // conflict is no longer one. Otherwise it is held back: pushing over a
+        // store that has also moved writes somebody's work away, and nothing
+        // here knows whose.
+        if !state.is_decided() && only.is_empty() {
+            held.push((item.name.clone(), state));
+            continue;
+        }
+
+        // The store moved and this machine did not: sending is writing the
+        // older copy over the newer one. That is a restore, not a push.
+        if matches!(state, State::Behind) {
+            behind.push(item.name.clone());
+            continue;
+        }
+
+        match state {
             State::Unchanged => {
+                // Agreement is exactly what this records. Writing it only
+                // after a transfer means an item that was already identical
+                // never gets a base, and can never be told apart from one
+                // nobody has a record of.
+                ledger.record(
+                    &item.name,
+                    &kitbag_core::collect::envelope_for(item, &home).fingerprint(),
+                );
                 same += 1;
                 continue;
             }
@@ -470,7 +513,12 @@ pub fn push(
                     let outcome = store.put(&item.name, &envelope);
                     progress.clear();
                     match outcome {
-                        Ok(()) => println!("  {} {:<28} sent", state.glyph(), item.name),
+                        Ok(()) => {
+                            // They agree now, and that is the point to compare
+                            // against next time.
+                            ledger.record(&item.name, &envelope.fingerprint());
+                            println!("  {} {:<28} sent", state.glyph(), item.name)
+                        }
                         Err(e) => {
                             println!("  ✗ {:<28} {}", item.name, root_cause(&e));
                             failed.push((item.name.clone(), root_cause(&e)));
@@ -496,6 +544,20 @@ pub fn push(
             skipped.len()
         );
     }
+    if !dry_run {
+        if let Err(e) = ledger.save(&ledger_path()) {
+            println!("  could not record what was exchanged: {e}");
+        }
+    }
+    if !behind.is_empty() {
+        println!(
+            "  {} newer in the store, so not sent: {}",
+            behind.len(),
+            behind.join(", ")
+        );
+        println!("  kitbag restore takes those.");
+    }
+    report_held(&held, "push");
     if !kept_back.is_empty() {
         println!(
             "  {} kept on this machine: {}",
@@ -556,6 +618,12 @@ pub fn restore(
         })
         .collect();
 
+    let mut ledger = kitbag_core::ledger::Ledger::load(&ledger_path());
+    // What this machine holds, by name, so a difference can be classified
+    // before anything is fetched or written.
+    let mine: BTreeMap<&str, &kitbag_core::Item> =
+        items.iter().map(|i| (i.name.as_str(), i)).collect();
+
     let progress = ui::Progress::new(colour);
     progress.say("opening the store");
     let store = open_store(backend)?;
@@ -567,6 +635,10 @@ pub fn restore(
     let mut elsewhere: Vec<String> = Vec::new();
     // Items this machine has said it keeps for itself.
     let mut kept_back: Vec<String> = Vec::new();
+    // Differences this run refused to settle on its own.
+    let mut held: Vec<(String, State)> = Vec::new();
+    // This machine is ahead on these; they are a push's business.
+    let mut ahead: Vec<String> = Vec::new();
     let here = kitbag_core::this_platform();
 
     progress.say("reading what the store holds");
@@ -638,6 +710,25 @@ pub fn restore(
             continue;
         }
 
+        // Both sides moved since they last agreed, so taking the store's copy
+        // writes this machine's work away. Held, unless it was named.
+        if only.is_empty() {
+            if let (Some(item), Some(there)) = (mine.get(name), listing.fingerprint.as_deref()) {
+                let one = Remote::from([(name.to_string(), Some(there.to_string()))]);
+                let state = kitbag_core::state::compare_against(item, &one, &home, &ledger);
+                if !state.is_decided() {
+                    held.push((listing.name.clone(), state));
+                    continue;
+                }
+                // This machine moved and the store did not: taking is writing
+                // the older copy over the newer one. That is a push.
+                if matches!(state, State::Ahead) {
+                    ahead.push(listing.name.clone());
+                    continue;
+                }
+            }
+        }
+
         // A file already here, identical to what the store holds, needs nothing
         // fetched to establish that: the store reported the hash, and hashing
         // what is on disk is free beside a round trip to the vault.
@@ -646,6 +737,12 @@ pub fn restore(
                 .map(|bytes| kitbag_core::payload_hash(&bytes) == there)
                 .unwrap_or(false)
             {
+                if let Some(item) = mine.get(name) {
+                    ledger.record(
+                        name,
+                        &kitbag_core::collect::envelope_for(item, &home).fingerprint(),
+                    );
+                }
                 same += 1;
                 continue;
             }
@@ -727,16 +824,31 @@ pub fn restore(
             ),
             None => println!("  + {:<28} {}", listing.name, pretty(dest, &home)),
         }
+        ledger.record(&listing.name, &envelope.fingerprint());
         written += 1;
     }
 
     drop(progress);
+    if !dry_run {
+        if let Err(e) = ledger.save(&ledger_path()) {
+            println!("  could not record what was exchanged: {e}");
+        }
+    }
     println!();
     if dry_run {
         println!("  {written} to write, {same} already here. Nothing was written.");
     } else {
         println!("  {written} written, {same} already here.");
     }
+    if !ahead.is_empty() {
+        println!(
+            "  {} newer here, so not taken: {}",
+            ahead.len(),
+            ahead.join(", ")
+        );
+        println!("  kitbag push sends those.");
+    }
+    report_held(&held, "restore");
     if !kept_back.is_empty() {
         println!();
         println!(
@@ -830,6 +942,44 @@ fn backup_beside(path: &Path) -> PathBuf {
     let mut name = path.as_os_str().to_os_string();
     name.push(format!(".backup.{stamp}"));
     PathBuf::from(name)
+}
+
+fn ledger_path() -> PathBuf {
+    config_path()
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join("exchanged")
+}
+
+/// Say what was not settled, and what would settle it.
+fn report_held(held: &[(String, State)], verb: &str) {
+    if held.is_empty() {
+        return;
+    }
+    println!();
+    println!("  {} not settled:", held.len());
+    for (name, state) in held {
+        let why = match state {
+            State::Conflict => "both sides moved since they last agreed",
+            _ => "differs, and there is no record of what they last agreed on",
+        };
+        println!("  {} {:<28} {why}", state.glyph(), name);
+    }
+    println!();
+    println!("  kitbag diff --only <item>                    what differs");
+    println!("  kitbag {verb} --only <item>                     settle it this way");
+    println!(
+        "  kitbag {} --only <item>                  or the other",
+        opposite(verb)
+    );
+}
+
+fn opposite(verb: &str) -> &'static str {
+    if verb == "push" {
+        "restore"
+    } else {
+        "push"
+    }
 }
 
 fn dismissed_path() -> PathBuf {

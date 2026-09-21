@@ -12,8 +12,17 @@ use crate::collect::Item;
 pub enum State {
     /// The store has never seen it.
     New,
-    /// The store holds something else under that name.
+    /// The store holds something else, and there is no record of what the two
+    /// last agreed on — so which way it should go cannot be worked out here.
     Changed,
+    /// This machine has moved since the last exchange and the store has not.
+    /// Sending it loses nothing.
+    Ahead,
+    /// The store has moved and this machine has not. Taking it loses nothing.
+    Behind,
+    /// Both have moved since they last agreed. Whichever way this goes, one
+    /// side's work is written over, so it is not a tool's to choose.
+    Conflict,
     /// Nothing to send.
     Unchanged,
     /// No answer is available. Either building the payload is not free, or it
@@ -28,9 +37,17 @@ impl State {
         match self {
             State::New => '+',
             State::Changed => '~',
+            State::Ahead => '>',
+            State::Behind => '<',
+            State::Conflict => '!',
             State::Unchanged => '=',
             State::Unknown => '?',
         }
+    }
+
+    /// Can this be acted on without asking anybody?
+    pub fn is_decided(self) -> bool {
+        !matches!(self, State::Conflict | State::Changed)
     }
 }
 
@@ -39,6 +56,20 @@ impl State {
 pub type Remote = HashMap<String, Option<String>>;
 
 pub fn compare(item: &Item, remote: &Remote, home: &std::path::Path) -> State {
+    compare_against(item, remote, home, &crate::ledger::Ledger::default())
+}
+
+/// The same, with the record of what the two last agreed on.
+///
+/// That record is the third point a difference needs to have a direction —
+/// the same three-way git does. Without it the only honest answer to "these
+/// differ" is that they differ.
+pub fn compare_against(
+    item: &Item,
+    remote: &Remote,
+    home: &std::path::Path,
+    ledger: &crate::ledger::Ledger,
+) -> State {
     // The whole envelope, not the payload: a scope marker that changed, or a
     // platform tag that was added, leaves the bytes alone and still has to
     // reach the store.
@@ -51,7 +82,12 @@ pub fn compare(item: &Item, remote: &Remote, home: &std::path::Path) -> State {
         // items shout on every run.
         Some(_) if item.volatile => State::Unknown,
         Some(Some(there)) if *there == here => State::Unchanged,
-        Some(Some(_)) => State::Changed,
+        Some(Some(there)) => match ledger.base(&item.name) {
+            None => State::Changed,
+            Some(base) if base == here => State::Behind,
+            Some(base) if base == there => State::Ahead,
+            Some(_) => State::Conflict,
+        },
     }
 }
 

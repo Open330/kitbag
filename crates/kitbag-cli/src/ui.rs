@@ -15,6 +15,12 @@ use kitbag_core::Scope;
 pub enum Mark {
     New,
     Changed,
+    /// This machine moved and the store did not.
+    Ahead,
+    /// The store moved and this machine did not.
+    Behind,
+    /// Both moved since they last agreed.
+    Conflict,
     Unchanged,
     /// Only doing the work would tell — an artifact that has to be built
     /// before it can be compared, and building it is not free.
@@ -26,6 +32,9 @@ impl Mark {
         match self {
             Mark::New => '+',
             Mark::Changed => '~',
+            Mark::Ahead => '>',
+            Mark::Behind => '<',
+            Mark::Conflict => '!',
             Mark::Unchanged => '=',
             Mark::Unknown => '?',
         }
@@ -35,6 +44,9 @@ impl Mark {
         match self {
             Mark::New => "\x1b[32m",
             Mark::Changed => "\x1b[33m",
+            Mark::Ahead => "\x1b[36m",
+            Mark::Behind => "\x1b[34m",
+            Mark::Conflict => "\x1b[1;31m",
             Mark::Unchanged => "\x1b[90m",
             Mark::Unknown => "\x1b[33m",
         }
@@ -156,18 +168,37 @@ pub fn render(groups: &[Group], colour: Colour, width: usize) -> String {
 }
 
 fn tally(groups: &[Group]) -> Vec<String> {
-    let mut counts = [0usize; 4];
+    let mut counts = [0usize; 7];
     for row in groups.iter().flat_map(|g| &g.rows) {
         match row.mark {
             Some(Mark::New) => counts[0] += 1,
             Some(Mark::Changed) => counts[1] += 1,
-            Some(Mark::Unchanged) => counts[2] += 1,
-            Some(Mark::Unknown) => counts[3] += 1,
+            Some(Mark::Ahead) => counts[2] += 1,
+            Some(Mark::Behind) => counts[3] += 1,
+            Some(Mark::Conflict) => counts[4] += 1,
+            Some(Mark::Unchanged) => counts[5] += 1,
+            Some(Mark::Unknown) => counts[6] += 1,
             None => {}
         }
     }
-    let labels = ["new", "changed", "unchanged", "not comparable"];
-    let marks = [Mark::New, Mark::Changed, Mark::Unchanged, Mark::Unknown];
+    let labels = [
+        "new",
+        "changed",
+        "to send",
+        "to take",
+        "in conflict",
+        "unchanged",
+        "not comparable",
+    ];
+    let marks = [
+        Mark::New,
+        Mark::Changed,
+        Mark::Ahead,
+        Mark::Behind,
+        Mark::Conflict,
+        Mark::Unchanged,
+        Mark::Unknown,
+    ];
     counts
         .iter()
         .enumerate()

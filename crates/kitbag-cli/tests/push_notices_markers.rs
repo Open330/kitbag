@@ -201,3 +201,84 @@ fn only_resolves_one_item_and_leaves_the_rest() {
     );
     assert!(!left.contains("env:one"), "{left}");
 }
+
+/// A second machine on the same store, so a difference has two sides.
+fn second_machine(state: &Path, body: &str) -> tempfile::TempDir {
+    let home = tempfile::tempdir().expect("home");
+    std::fs::create_dir_all(home.path().join(".envs")).unwrap();
+    std::fs::write(home.path().join(".envs/one.env"), body).unwrap();
+    std::fs::write(
+        home.path().join("machine.toml"),
+        "scopes = [\"personal\"]\n\n[[track]]\npath = \"~/.envs/*.env\"\n",
+    )
+    .unwrap();
+    // Agreeing is what makes a later difference classifiable.
+    kitbag(home.path(), state, &["push", "--backend", "bw"]);
+    home
+}
+
+#[test]
+fn one_side_moving_is_a_direction_not_a_question() {
+    let (a, state) = machine("scopes = [\"personal\"]\n\n[[track]]\npath = \"~/.envs/*.env\"\n");
+    kitbag(a.path(), state.path(), &["push", "--backend", "bw"]);
+    let b = second_machine(state.path(), "# scope: personal\nA=1\n");
+
+    // Only A moves.
+    std::fs::write(a.path().join(".envs/one.env"), "# scope: personal\nA=2\n").unwrap();
+    kitbag(a.path(), state.path(), &["push", "--backend", "bw"]);
+
+    // B has nothing to send, and says which way it does have to go.
+    let pushed = kitbag(b.path(), state.path(), &["push", "--backend", "bw"]);
+    assert!(pushed.contains("0 sent"), "{pushed}");
+    assert!(pushed.contains("newer in the store"), "{pushed}");
+
+    // And taking it is not a question either.
+    let took = kitbag(b.path(), state.path(), &["restore", "--backend", "bw"]);
+    assert!(took.contains("1 written"), "{took}");
+    assert!(!took.contains("not settled"), "{took}");
+}
+
+#[test]
+fn both_sides_moving_stops_and_says_so() {
+    let (a, state) = machine("scopes = [\"personal\"]\n\n[[track]]\npath = \"~/.envs/*.env\"\n");
+    kitbag(a.path(), state.path(), &["push", "--backend", "bw"]);
+    let b = second_machine(state.path(), "# scope: personal\nA=1\n");
+
+    std::fs::write(
+        a.path().join(".envs/one.env"),
+        "# scope: personal\nA=from-a\n",
+    )
+    .unwrap();
+    kitbag(a.path(), state.path(), &["push", "--backend", "bw"]);
+    std::fs::write(
+        b.path().join(".envs/one.env"),
+        "# scope: personal\nA=from-b\n",
+    )
+    .unwrap();
+
+    // Neither direction runs on its own.
+    let pushed = kitbag(b.path(), state.path(), &["push", "--backend", "bw"]);
+    assert!(pushed.contains("not settled"), "{pushed}");
+    assert!(pushed.contains("both sides moved"), "{pushed}");
+    assert!(
+        pushed.contains("0 sent"),
+        "nothing was written over:\n{pushed}"
+    );
+
+    let took = kitbag(b.path(), state.path(), &["restore", "--backend", "bw"]);
+    assert!(took.contains("not settled"), "{took}");
+    assert!(took.contains("0 written"), "nor the other way:\n{took}");
+
+    // Naming it is how a person says they have decided.
+    let settled = kitbag(
+        b.path(),
+        state.path(),
+        &["push", "--backend", "bw", "--only", "env:one"],
+    );
+    assert!(settled.contains("1 sent"), "{settled}");
+
+    // And once settled it is settled: no conflict remains.
+    let after = kitbag(b.path(), state.path(), &["push", "--backend", "bw"]);
+    assert!(!after.contains("not settled"), "{after}");
+    assert!(after.contains("0 sent, 1 already there"), "{after}");
+}
