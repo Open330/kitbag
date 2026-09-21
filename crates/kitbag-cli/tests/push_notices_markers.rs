@@ -637,3 +637,41 @@ fn discover_without_a_store_says_only_what_it_can_know() {
         "no store was named, so nothing is claimed about one:\n{out}"
     );
 }
+
+#[test]
+fn a_first_push_makes_one_folder_however_many_items_go_at_once() {
+    // Asking "is there a folder?" and "make one" as two questions, with the
+    // lock released between, lets every thread answer no. Eight processes
+    // then make eight folders called `kitbag` in a store whose whole purpose
+    // is keeping what it is given — and, on a loaded machine, one of them
+    // reads the folder list while another is writing it and gets half.
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    std::fs::create_dir_all(home.path().join(".envs")).unwrap();
+    for n in 0..12 {
+        std::fs::write(
+            home.path().join(format!(".envs/f{n}.env")),
+            format!("# scope: personal\nK{n}=v\n"),
+        )
+        .unwrap();
+    }
+    std::fs::write(
+        home.path().join("machine.toml"),
+        "scopes = [\"personal\"]\n\n[[track]]\npath = \"~/.envs/*.env\"\n",
+    )
+    .unwrap();
+
+    let out = kitbag_with(
+        home.path(),
+        state.path(),
+        &["push", "--backend", "bw", "--jobs", "8"],
+    );
+    assert!(out.contains("12 sent"), "{out}");
+
+    let made = std::fs::read_to_string(state.path().join("calls.log"))
+        .unwrap_or_default()
+        .lines()
+        .filter(|l| l.trim() == "create folder")
+        .count();
+    assert_eq!(made, 1, "made {made} folders, not one:\n{out}");
+}

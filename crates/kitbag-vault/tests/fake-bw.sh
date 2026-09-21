@@ -36,12 +36,18 @@ case "$1 ${2:-}" in
     "status ")      printf '{"status":"unlocked"}' ;;
     "sync ")        ;;   # the real one pulls the vault; here there is nowhere to pull from
     "encode ")      base64 | tr -d '\n' ;;
-    "list folders") cat "$S/folders.json" 2>/dev/null || echo '[]' ;;
+    # `cat` of a file that exists and is empty succeeds and prints nothing,
+    # so `|| echo '[]'` never fires and the caller gets an empty string where
+    # it expected JSON. That is a real window while the file is rewritten.
+    "list folders") [[ -s "$S/folders.json" ]] && cat "$S/folders.json" || echo '[]' ;;
     "list items")   state list ;;
     "get item")     state one "$3" ;;
 
     "create folder")
-        printf '[{"id":"folder-1","name":"kitbag"}]' > "$S/folders.json"
+        # Replaced, not rewritten in place: a reader arriving mid-write would
+        # otherwise see an empty file where it expected a list.
+        printf '[{"id":"folder-1","name":"kitbag"}]' > "$S/folders.json.tmp"
+        mv -f "$S/folders.json.tmp" "$S/folders.json"
         printf '{"id":"folder-1","name":"kitbag"}'
         ;;
 

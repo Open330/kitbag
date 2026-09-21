@@ -191,7 +191,8 @@ impl Bw {
 
     fn folder_id(&self) -> Result<Option<String>> {
         let out = self.call(&["list", "folders"], None)?;
-        let folders: Vec<serde_json::Value> = serde_json::from_str(&out)?;
+        let folders: Vec<serde_json::Value> = serde_json::from_str(&out)
+            .map_err(|e| self.explain(anyhow!("bw list folders said nothing usable: {e}")))?;
         Ok(folders
             .iter()
             .find(|f| f.get("name").and_then(|n| n.as_str()) == Some(FOLDER))
@@ -200,12 +201,18 @@ impl Bw {
     }
 
     fn ensure_folder(&self) -> Result<String> {
-        if let Some(id) = self
-            .folder
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone()
-        {
+        // The lock is held across the whole question, not taken three times
+        // to answer it. A push sends several items at once, each one asking
+        // this, and releasing between "is there one?" and "make one" lets
+        // every thread decide there is not — eight processes creating eight
+        // folders called `kitbag`, in a store whose whole point is that it
+        // keeps what it is given.
+        //
+        // Found on a first push of twelve items with `--jobs 8`: the folder
+        // was written and read at the same moment and one reader got half of
+        // it. The duplicate folders were the same race, quieter.
+        let mut held = self.folder.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(id) = held.clone() {
             return Ok(id);
         }
         // Every item already listed says which folder it is in, and they are
@@ -218,22 +225,23 @@ impl Bw {
                     .map(str::to_string)
             })
         })? {
-            *self.folder.lock().unwrap_or_else(|e| e.into_inner()) = Some(id.clone());
+            *held = Some(id.clone());
             return Ok(id);
         }
         if let Some(id) = self.folder_id()? {
-            *self.folder.lock().unwrap_or_else(|e| e.into_inner()) = Some(id.clone());
+            *held = Some(id.clone());
             return Ok(id);
         }
         let body = serde_json::json!({ "name": FOLDER }).to_string();
         let created = self.call(&["create", "folder", &encode(body.as_bytes())], None)?;
-        let value: serde_json::Value = serde_json::from_str(&created)?;
+        let value: serde_json::Value = serde_json::from_str(&created)
+            .map_err(|e| self.explain(anyhow!("bw create folder said nothing usable: {e}")))?;
         let id = value
             .get("id")
             .and_then(|i| i.as_str())
             .map(str::to_string)
             .ok_or_else(|| anyhow!("bw created a folder without an id"))?;
-        *self.folder.lock().unwrap_or_else(|e| e.into_inner()) = Some(id.clone());
+        *held = Some(id.clone());
         Ok(id)
     }
 }
