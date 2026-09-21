@@ -13,21 +13,10 @@ mkdir -p "$S/attachments"
 echo "$1 ${2:-}" >> "$S/calls.log"
 
 # The real client locks its own vault file, so kitbag may send several items
-# at once. This stub reads a file, changes it and writes it back, which two
-# callers doing at once loses one of them — so it takes a lock. `mkdir` is the
-# atomic one that needs no extra tool.
-state() {
-    local lock="$S/.lock" waited=0
-    until mkdir "$lock" 2>/dev/null; do
-        sleep 0.02
-        waited=$((waited + 1))
-        [[ "$waited" -lt 500 ]] || { echo "fake bw: gave up waiting for the lock" >&2; return 1; }
-    done
-    python3 "$(dirname "${BASH_SOURCE[0]}")/fake-bw.py" "$S" "$@"
-    local code=$?
-    rmdir "$lock"
-    return "$code"
-}
+# at once. The mutation happens in fake-bw.py, which takes a real lock around
+# it — a shell spinlock left a stale directory behind whenever anything failed
+# and took the rest of the run down with it.
+state() { python3 "$(dirname "${BASH_SOURCE[0]}")/fake-bw.py" "$S" "$@"; }
 
 case "$1 ${2:-}" in
     "status ")      printf '{"status":"unlocked"}' ;;

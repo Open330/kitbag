@@ -1,10 +1,18 @@
 """The state behind fake-bw.sh: a list of items in one JSON file."""
+import fcntl
 import json
 import pathlib
 import sys
 
 state, op = pathlib.Path(sys.argv[1]), sys.argv[2]
 store = state / "items.json"
+
+# Several of these run at once, because kitbag sends several items at once.
+# Read, change, write is three steps, and two callers interleaving them loses
+# one of the changes — which looked like kitbag dropping an item.
+lock = open(state / ".lock", "w")
+fcntl.flock(lock, fcntl.LOCK_EX)
+
 items = json.loads(store.read_text()) if store.exists() else []
 
 
