@@ -43,7 +43,10 @@ pub fn this_machine() -> String {
         .output()
         .ok()
         .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        // Lowercased: `hostname -s` answers `june-MBA` here and `jiun-mini`
+        // next door, and a name that goes into a store should not depend on
+        // which. Host names are matched without case everywhere else too.
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_lowercase())
         .filter(|n| !n.is_empty())
         .unwrap_or_else(|| "unknown".to_string())
 }
@@ -337,5 +340,27 @@ scope = "auto""#,
         let home = Path::new("/home/user");
         assert_eq!(expand("~/.envs/a.env", home), "/home/user/.envs/a.env");
         assert_eq!(expand("/etc/hosts", home), "/etc/hosts");
+    }
+}
+
+#[cfg(test)]
+mod machine_tests {
+    use super::*;
+
+    #[test]
+    fn the_machine_name_is_not_shouted() {
+        // `hostname -s` answers `june-MBA` on one of these machines and
+        // `jiun-mini` on another. The name goes into a store and stays there.
+        let name = this_machine();
+        assert_eq!(name, name.to_lowercase(), "got {name}");
+        assert!(!name.is_empty());
+    }
+
+    #[test]
+    fn the_config_can_say_what_this_machine_is_called() {
+        let mut config = Config::default();
+        assert_eq!(config.machine_name(), this_machine());
+        config.machine = Some("pinned".into());
+        assert_eq!(config.machine_name(), "pinned");
     }
 }
