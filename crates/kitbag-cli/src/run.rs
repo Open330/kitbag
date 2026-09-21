@@ -1159,7 +1159,7 @@ fn append_tracks(cfg_path: &Path, found: &[Finding], home: &Path) -> Result<()> 
 /// says what it found — key names, counts, sizes, hashes — and stops there,
 /// because which side should win is not a thing a tool can know.
 pub fn diff(backend: Option<&str>, only: &[String], colour: Colour) -> Result<()> {
-    use kitbag_core::difference::{describe, Difference};
+    use kitbag_core::difference::describe;
 
     let home = home();
     let config = Config::load_or_default(&config_path())?.with_env_skips();
@@ -1206,37 +1206,7 @@ pub fn diff(backend: Option<&str>, only: &[String], colour: Colour) -> Result<()
         }
 
         println!("  ~ {}", item.name);
-        match what {
-            Difference::Keys {
-                only_here,
-                only_there,
-                differing,
-                here_lines,
-                there_lines,
-            } => {
-                println!("      here   {here_lines} lines");
-                println!("      store  {there_lines} lines");
-                if !only_here.is_empty() {
-                    println!("      only here:   {}", only_here.join(" "));
-                }
-                if !only_there.is_empty() {
-                    println!("      only there:  {}", only_there.join(" "));
-                }
-                if !differing.is_empty() {
-                    println!("      differ:      {}", differing.join(" "));
-                }
-            }
-            Difference::Opaque {
-                here_bytes,
-                there_bytes,
-                here_hash,
-                there_hash,
-            } => {
-                println!("      here   {here_bytes} bytes  {}", &here_hash[..12]);
-                println!("      store  {there_bytes} bytes  {}", &there_hash[..12]);
-            }
-            Difference::None => unreachable!("handled above"),
-        }
+        describe_one(item, &theirs.payload);
         shown += 1;
     }
 
@@ -1250,6 +1220,26 @@ pub fn diff(backend: Option<&str>, only: &[String], colour: Colour) -> Result<()
         println!("    kitbag push    --backend <name> --only <item>   send this machine's");
     }
     Ok(())
+}
+
+/// A list, shortened. An archive can hold dozens of paths and a question has
+/// one screen; the count is what matters and the first few say what kind.
+fn show_some(label: &str, names: &[String]) {
+    if names.is_empty() {
+        return;
+    }
+    const SHOWN: usize = 6;
+    let head = names
+        .iter()
+        .take(SHOWN)
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join(" ");
+    if names.len() > SHOWN {
+        println!("      {label} {head} … and {} more", names.len() - SHOWN);
+    } else {
+        println!("      {label} {head}");
+    }
 }
 
 /// What an answer at the prompt means.
@@ -1288,15 +1278,28 @@ fn describe_one(item: &kitbag_core::Item, theirs: &[u8]) {
         } => {
             println!("      here   {here_lines} lines");
             println!("      store  {there_lines} lines");
-            if !only_here.is_empty() {
-                println!("      only here:   {}", only_here.join(" "));
+            show_some("only here: ", &only_here);
+            show_some("only there:", &only_there);
+            show_some("differ:    ", &differing);
+            if only_here.is_empty() && only_there.is_empty() && differing.is_empty() {
+                // Every setting agrees and the bytes do not: a comment, an
+                // ordering, a blank line. Saying nothing here left a person
+                // staring at two line counts.
+                println!("      every setting agrees — the difference is elsewhere in the file");
             }
-            if !only_there.is_empty() {
-                println!("      only there:  {}", only_there.join(" "));
-            }
-            if !differing.is_empty() {
-                println!("      differ:      {}", differing.join(" "));
-            }
+        }
+        Difference::Archive {
+            only_here,
+            only_there,
+            differing,
+            here_count,
+            there_count,
+        } => {
+            println!("      here   {here_count} files");
+            println!("      store  {there_count} files");
+            show_some("only here: ", &only_here);
+            show_some("only there:", &only_there);
+            show_some("differ:    ", &differing);
         }
         Difference::Opaque {
             here_bytes,

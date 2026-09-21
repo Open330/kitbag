@@ -36,6 +36,16 @@ pub enum Difference {
         here_hash: String,
         there_hash: String,
     },
+    /// Both sides are archives, so what is in them can be said without
+    /// saying what any of it contains.
+    Archive {
+        only_here: Vec<String>,
+        only_there: Vec<String>,
+        /// Present on both sides at a different size.
+        differing: Vec<String>,
+        here_count: usize,
+        there_count: usize,
+    },
     /// The bytes are the same. Nothing to resolve.
     None,
 }
@@ -80,6 +90,27 @@ fn pairs(text: &str) -> Option<BTreeMap<String, String>> {
     Some(out)
 }
 
+/// What an archive holds: path to size. `None` when it is not one, or not one
+/// this can read — a guess about a backup is worse than no guess.
+fn entries(bytes: &[u8]) -> Option<BTreeMap<String, u64>> {
+    if bytes.len() < 2 || bytes[0] != 0x1f || bytes[1] != 0x8b {
+        return None;
+    }
+    let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(bytes));
+    let mut out = BTreeMap::new();
+    for entry in archive.entries().ok()? {
+        let entry = entry.ok()?;
+        let path = entry.path().ok()?.display().to_string();
+        // A path is structure, not a value — but a path that looks like a
+        // credential is still not printed.
+        if !crate::lint::check(&path).is_empty() {
+            continue;
+        }
+        out.insert(path, entry.size());
+    }
+    (!out.is_empty()).then_some(out)
+}
+
 fn lines_of(text: &str) -> usize {
     text.lines().filter(|l| !l.trim().is_empty()).count()
 }
@@ -112,6 +143,23 @@ pub fn describe(here: &[u8], there: &[u8]) -> Difference {
                 there_lines: lines_of(there_text),
             };
         }
+    }
+
+    if let (Some(a), Some(b)) = (entries(here), entries(there)) {
+        let only_here: Vec<String> = a.keys().filter(|k| !b.contains_key(*k)).cloned().collect();
+        let only_there: Vec<String> = b.keys().filter(|k| !a.contains_key(*k)).cloned().collect();
+        let differing: Vec<String> = a
+            .iter()
+            .filter(|(k, size)| b.get(*k).is_some_and(|other| other != *size))
+            .map(|(k, _)| k.clone())
+            .collect();
+        return Difference::Archive {
+            only_here,
+            only_there,
+            differing,
+            here_count: a.len(),
+            there_count: b.len(),
+        };
     }
 
     Difference::Opaque {
@@ -198,5 +246,84 @@ mod tests {
     #[test]
     fn the_same_bytes_have_nothing_to_resolve() {
         assert!(describe(b"A=1\n", b"A=1\n").is_none());
+    }
+}
+
+#[cfg(test)]
+mod archive_tests {
+    use super::*;
+    use std::io::Write;
+
+    fn targz(files: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut tar = tar::Builder::new(Vec::new());
+        for (name, body) in files {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(body.len() as u64);
+            header.set_mode(0o600);
+            header.set_cksum();
+            tar.append_data(&mut header, name, *body).unwrap();
+        }
+        let raw = tar.into_inner().unwrap();
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        gz.write_all(&raw).unwrap();
+        gz.finish().unwrap()
+    }
+
+    #[test]
+    fn an_archive_is_described_by_what_is_in_it() {
+        // Two byte counts is not something a person can decide on, which is
+        // what a real resolve came down to for a widget directory.
+        let here = targz(&[("app/prefs.json", b"{}"), ("app/only-here.json", b"{}")]);
+        let there = targz(&[
+            ("app/prefs.json", b"{\"a\":1}"),
+            ("app/only-there.json", b"{}"),
+        ]);
+
+        match describe(&here, &there) {
+            Difference::Archive {
+                only_here,
+                only_there,
+                differing,
+                here_count,
+                there_count,
+            } => {
+                assert_eq!((here_count, there_count), (2, 2));
+                assert_eq!(only_here, vec!["app/only-here.json"]);
+                assert_eq!(only_there, vec!["app/only-there.json"]);
+                assert_eq!(differing, vec!["app/prefs.json"], "same path, other size");
+            }
+            other => panic!("expected an archive, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn what_is_not_an_archive_is_still_a_size_and_a_hash() {
+        assert!(matches!(
+            describe(b"not gzip", b"nor this"),
+            Difference::Opaque { .. }
+        ));
+    }
+
+    #[test]
+    fn a_path_that_looks_like_a_credential_is_left_out() {
+        // Paths are structure, not values — but one that trips the lint is
+        // not printed just because it happens to be a filename.
+        // Assembled, so this file does not itself carry a credential-shaped
+        // literal — kitbag lints its own source, and it is right to.
+        let secret = format!(
+            "app/{}_{}{}",
+            "ghp", "0123456789abcdefghij", "klmnopqrstuvwx"
+        );
+        let here = targz(&[("app/fine.json", b"{}"), (secret.as_str(), b"{}")]);
+        let there = targz(&[("app/fine.json", b"{\"a\":1}")]);
+        match describe(&here, &there) {
+            Difference::Archive { only_here, .. } => {
+                assert!(
+                    only_here.is_empty(),
+                    "a credential-shaped path leaked: {only_here:?}"
+                );
+            }
+            other => panic!("expected an archive, got {other:?}"),
+        }
     }
 }
