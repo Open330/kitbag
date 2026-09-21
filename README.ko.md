@@ -66,9 +66,13 @@ kitbag status                 이 기계에 무엇이 있고, 저장소와 무�
 kitbag plan                   apply가 무엇을 바꿀지만 보여주고 멈춤
 kitbag apply                  기계를 레시피대로 맞춤
                               (패키지·링크·defaults·다운로드·클론·병합)
-kitbag discover               아직 아무도 추적하지 않는 개인 상태를 찾아냄
+kitbag discover               추적되지 않는 상태, 그리고 추적은 되는데
+                              저장소에 없는 것
 kitbag track <path> --scope work
+kitbag programs               무엇이 깔려 있는지 적어둠 — 다시 깔 수 있도록
 kitbag push / restore         scope 단위로 옮김
+kitbag diff                   무엇이 다른지, 값은 빼고
+kitbag resolve                어느 쪽도 혼자 정할 수 없는 것을 정함
 kitbag doctor                 권한, 도달성, 미분류 파일, 저장소의 고아 항목
 kitbag lint                   커밋되면 안 되는 것을 거부
 kitbag trust sync             이 기계에 로그인할 수 있는 기계들
@@ -77,6 +81,86 @@ kitbag completions zsh        …bash, fish, elvish, powershell
 
 모든 명령에 `--json`, `--color auto|always|never`, `NO_COLOR` 존중. 그리고
 **어떤 명령도 비밀의 값을 출력하지 않습니다.**
+
+## 두 기계가 어긋났을 때
+
+차이에는 방향이 있습니다. kitbag이 **마지막으로 합의한 시점의 지문**을
+기록하기 때문입니다 — git이 merge base라 부르는 그 세 번째 점입니다.
+
+```console
+>  내 쪽만 움직임        push가 보냄
+<  저장소만 움직임       restore가 가져옴
+!  양쪽 다 움직임        사람이 정할 일
+```
+
+push는 `<`를 보내지 않고 restore는 `>`를 가져오지 않습니다. 둘 다 **더
+새것 위에 옛것을 쓰는** 동작입니다. `!`는 양쪽을 멈추고 기다립니다:
+
+```console
+$ kitbag resolve
+! env:docs-publish  (1/2)
+    here   3 lines
+    store  5 lines
+    only there:  DOCS_ROOT DOCS_USER
+    differ:      DOCS_URL
+    [m]ine  [t]heirs  [s]kip  [q]uit >
+```
+
+키 이름·개수·크기, 그리고 아카이브 안의 파일 목록 — **양쪽 어느 값도
+나오지 않습니다.** 못 알아들은 답은 skip이고 빈 줄도 skip입니다. 실제 답
+둘 중 하나는 자격증명을 덮어쓰므로, 실수로 가장 누르기 쉬운 키가 아무것도
+하지 않아야 합니다. 터미널이 없으면 묻지 않고 남은 것만 나열합니다.
+
+## 한 기계에만 속하는 것
+
+네 기계가 한 경로에서 같은 이름을 유도하고 그 아래 서로 다른 것을 들고
+있을 수 있습니다. SSH 키가 그렇습니다 — 두 기계가 한 키를 쓰면 그 키를
+폐기할 때 둘 다 잠깁니다.
+
+```toml
+[[track]]
+path = "~/.ssh/id_ed25519"
+per_machine = true          # ssh:id_ed25519@<host>
+```
+
+네 항목, 네 키, 각각 보관됩니다. 그리고 **파일은 `~/.ssh/id_ed25519`에
+그대로 있습니다** — ssh가 찾는 자리입니다. 저장소에서의 이름만 다르고,
+복구는 다른 기계 이름이 찍힌 것을 건드리지 않습니다.
+
+`skip`은 다른 답입니다. **어느 방향으로도 상대하고 싶지 않은 항목**을 위한
+것이지, 단지 이 기계 것인 항목을 위한 게 아닙니다. 키를 주고받지 않겠다는
+건 그 키를 백업하지 않겠다는 뜻이고, 한 곳에만 있는 키는 그 기계와 함께
+사라집니다.
+
+## 프로그램은 목록으로
+
+저장소가 절대 담지 말아야 할 것이 바이너리입니다. 크고, 한 아키텍처용으로
+빌드됐고, 그걸 배포한 쪽이 다시 내어줍니다. 보관할 값어치가 있는 건
+**무엇이 깔렸는가**입니다:
+
+```console
+$ kitbag programs
+kitbag/programs 1
+brew	ripgrep
+cask	ghostty
+cargo	kitbag	0.11.0
+npm	@bitwarden/cli	2026.8.0
+rustup	stable-aarch64-apple-darwin
+```
+
+71개가 1킬로바이트입니다. `kitbag programs --restore`로 되돌리면 **빠진
+것만 설치하고 아무것도 지우지 않습니다.** 기계가 목록보다 많이 가진 건
+괜찮습니다. 목록은 *없어서는 안 되는 것*입니다. 다룰 줄 모르는 관리자는
+추측하지 않고 그렇다고 말합니다.
+
+추적 항목으로는 다른 명령 쌍과 똑같습니다:
+
+```toml
+[[track]]
+name = "programs"
+scope = "personal"
+command = { export = "kitbag programs", restore = "kitbag programs --restore" }
+```
 
 ## 세 개의 저장소, 그리고 그 이유
 

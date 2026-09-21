@@ -163,6 +163,17 @@ enum Command {
     /// Settle the differences neither side can settle alone, one at a time
     Resolve,
 
+    /// What is installed here, written down — or put back from that writing
+    Programs {
+        /// Read a list on stdin and install what is missing
+        #[arg(long)]
+        restore: bool,
+
+        /// Say what would be installed and stop
+        #[arg(long)]
+        dry_run: bool,
+    },
+
     /// Send tracked state to the store
     Push {
         /// Say what would be sent and stop
@@ -263,6 +274,7 @@ fn main() -> Result<()> {
         Command::Lint { ref paths } => check::lint(paths, cli.json)?,
         Command::Diff { ref only } => run::diff(cli.backend.as_deref(), only, colour)?,
         Command::Resolve => run::resolve(cli.backend.as_deref(), wanted, colour)?,
+        Command::Programs { restore, dry_run } => run::programs(restore, dry_run, colour)?,
         Command::Push { dry_run, ref only } => run::push(
             cli.backend.as_deref(),
             wanted,
@@ -298,6 +310,7 @@ fn name_of(c: &Command) -> &'static str {
         Command::Track { .. } => "track",
         Command::Diff { .. } => "diff",
         Command::Resolve => "resolve",
+        Command::Programs { .. } => "programs",
         Command::Push { .. } => "push",
         Command::Restore { .. } => "restore",
         Command::Doctor => "doctor",

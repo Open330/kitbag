@@ -90,9 +90,13 @@ kitbag status                 what this machine has, marked against the store
 kitbag plan                   what apply would change, and nothing else
 kitbag apply                  make the machine match the recipes
                               (packages, links, defaults, downloads, clones, merges)
-kitbag discover               find personal state nothing is tracking yet
+kitbag discover               find state nothing is tracking, and what is
+                              tracked and not in the store
 kitbag track <path> --scope work
+kitbag programs               write down what is installed, so it can be again
 kitbag push / restore         move it, one scope at a time
+kitbag diff                   what differs, without the values
+kitbag resolve                settle what neither side can settle alone
 kitbag doctor                 permissions, reachability, unscoped files, orphans
 kitbag lint                   refuse the things that must not be committed
 kitbag trust sync             the machines that may log in here
@@ -101,6 +105,87 @@ kitbag completions zsh        …bash, fish, elvish, powershell
 
 `--json` on everything, `--color auto|always|never`, `NO_COLOR` respected, and
 no command ever prints a secret's value.
+
+## When two machines disagree
+
+A difference has a direction, because kitbag records the fingerprint at the
+last exchange — the third point git calls a merge base:
+
+```console
+>  this machine moved, the store did not     push sends it
+<  the store moved, this machine did not     restore takes it
+!  both moved since they agreed              yours to settle
+```
+
+A push will not send a `<` and a restore will not take a `>`; both are an
+older copy written over a newer one. A `!` stops both and waits:
+
+```console
+$ kitbag resolve
+! env:docs-publish  (1/2)
+    here   3 lines
+    store  5 lines
+    only there:  DOCS_ROOT DOCS_USER
+    differ:      DOCS_URL
+    [m]ine  [t]heirs  [s]kip  [q]uit >
+```
+
+Key names, counts, sizes and file lists inside an archive — never a value
+from either side. An answer that is not understood is a skip, and so is an
+empty line: one of the two real answers writes over a credential, so the key
+easiest to hit by accident does nothing. With no terminal it asks nothing and
+lists what is left.
+
+## Things that belong to one machine
+
+Four machines can derive one item name from one path and hold four different
+things under it. An SSH key is the example that matters: two machines sharing
+one means revoking it locks out both.
+
+```toml
+[[track]]
+path = "~/.ssh/id_ed25519"
+per_machine = true          # ssh:id_ed25519@<host>
+```
+
+Four items, four keys, each one kept — and the file stays at
+`~/.ssh/id_ed25519`, where ssh looks for it. Only the name in the store
+differs, and a restore leaves alone anything stamped with another machine's.
+
+`skip` is the other answer, for an item this machine wants nothing to do with
+in either direction. Not for one that simply belongs to it: refusing to
+exchange a key is refusing to back it up, and a key that exists in one place
+is gone with the machine it is on.
+
+## Programs, as a list
+
+A store should never hold a binary. It is large, it is built for one
+architecture, and whoever published it will hand it over again. What is worth
+keeping is what was installed:
+
+```console
+$ kitbag programs
+kitbag/programs 1
+brew	ripgrep
+cask	ghostty
+cargo	kitbag	0.11.0
+npm	@bitwarden/cli	2026.8.0
+rustup	stable-aarch64-apple-darwin
+```
+
+Seventy-one of those is a kilobyte. Put it back with `kitbag programs
+--restore`, which installs what is missing and removes nothing — a machine is
+allowed to have more than the list; the list is what it must not lack. A
+manager it cannot drive is named rather than guessed at.
+
+As a tracked item it is a command pair like any other:
+
+```toml
+[[track]]
+name = "programs"
+scope = "personal"
+command = { export = "kitbag programs", restore = "kitbag programs --restore" }
+```
 
 ## Three stores, and why
 

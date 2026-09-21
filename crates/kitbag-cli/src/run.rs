@@ -1222,6 +1222,31 @@ pub fn discover(
         return Ok(());
     }
 
+    // What is installed is state too, and the one kind a store should hold as
+    // a list rather than as itself. Nothing in the catalogue can find it,
+    // because it is not a file.
+    let tracked_programs = config
+        .tracks
+        .iter()
+        .any(|t| t.name.as_deref() == Some("programs"));
+    if !tracked_programs {
+        if let Some(manager) = kitbag_providers::PackageManager::detect() {
+            println!();
+            println!(
+                "  {} is here and nothing records what it installed.",
+                manager.name()
+            );
+            println!("  The list, not the programs — names, and versions where there are any:");
+            println!();
+            println!("    [[track]]");
+            println!("    name = \"programs\"");
+            println!("    scope = \"personal\"");
+            println!(
+                "    command = {{ export = \"kitbag programs\", restore = \"kitbag programs --restore\" }}"
+            );
+        }
+    }
+
     if !unkept.is_empty() {
         println!();
         println!("  {} tracked here and not in the store:", unkept.len());
@@ -1681,6 +1706,110 @@ pub fn resolve(backend: Option<&str>, wanted: Option<Wanted>, colour: Colour) ->
         for (name, why) in &unreadable {
             println!("  · {name}: {why}");
         }
+    }
+    Ok(())
+}
+
+/// Write down what is installed here, or put it back.
+///
+/// A store should never hold a binary: it is large, it is built for one
+/// architecture, and whoever published it will hand it over again. What is
+/// worth keeping is the list — what was installed, by which manager, at which
+/// version where one can be asked for.
+///
+/// Putting it back installs what is missing and removes nothing. A machine is
+/// allowed to have more than the list; the list is what it must not lack.
+pub fn programs(restore: bool, dry_run: bool, colour: Colour) -> Result<()> {
+    use kitbag_providers::programs;
+
+    if !restore {
+        print!("{}", programs::write(&programs::installed()));
+        return Ok(());
+    }
+
+    let mut text = String::new();
+    std::io::Read::read_to_string(&mut std::io::stdin(), &mut text)?;
+    let wanted = programs::read(&text);
+    if wanted.is_empty() {
+        println!();
+        println!("  Nothing listed.");
+        return Ok(());
+    }
+
+    let here: std::collections::BTreeSet<(String, String)> = programs::installed()
+        .into_iter()
+        .map(|p| (p.manager, p.name))
+        .collect();
+
+    let progress = ui::Progress::new(colour);
+    let mut installed = 0usize;
+    let mut already = 0usize;
+    let mut unknown: Vec<String> = Vec::new();
+    let mut failed: Vec<(String, String)> = Vec::new();
+
+    println!();
+    for p in &wanted {
+        if here.contains(&(p.manager.clone(), p.name.clone())) {
+            already += 1;
+            continue;
+        }
+        let Some(argv) = programs::install_command(p) else {
+            unknown.push(format!("{}:{}", p.manager, p.name));
+            continue;
+        };
+        if dry_run {
+            progress.clear();
+            println!("  + {:<28} {}", p.name, argv.join(" "));
+            installed += 1;
+            continue;
+        }
+        progress.say(format!("installing {}", p.name));
+        let out = std::process::Command::new(&argv[0])
+            .args(&argv[1..])
+            .output();
+        progress.clear();
+        match out {
+            Ok(o) if o.status.success() => {
+                println!("  + {:<28} {}", p.name, p.manager);
+                installed += 1;
+            }
+            Ok(o) => {
+                let why = String::from_utf8_lossy(&o.stderr)
+                    .lines()
+                    .find(|l| !l.trim().is_empty())
+                    .unwrap_or("no message")
+                    .trim()
+                    .to_string();
+                println!("  ✗ {:<28} {why}", p.name);
+                failed.push((p.name.clone(), why));
+            }
+            Err(e) => {
+                println!("  ✗ {:<28} {e}", p.name);
+                failed.push((p.name.clone(), e.to_string()));
+            }
+        }
+    }
+
+    drop(progress);
+    println!();
+    if dry_run {
+        println!("  {installed} to install, {already} already here. Nothing was run.");
+    } else {
+        println!("  {installed} installed, {already} already here.");
+    }
+    if !unknown.is_empty() {
+        println!(
+            "  {} from a manager this does not drive: {}",
+            unknown.len(),
+            unknown.join(", ")
+        );
+    }
+    if !failed.is_empty() {
+        println!("  {} did not install:", failed.len());
+        for (name, why) in &failed {
+            println!("    {name}: {why}");
+        }
+        bail!("{} program(s) did not install", failed.len());
     }
     Ok(())
 }

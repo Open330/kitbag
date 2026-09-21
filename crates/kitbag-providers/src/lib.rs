@@ -11,6 +11,7 @@
 
 pub mod apply;
 pub mod more;
+pub mod programs;
 
 use std::path::Path;
 use std::process::Command as Proc;
