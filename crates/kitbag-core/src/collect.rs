@@ -136,11 +136,15 @@ pub fn collect(config: &Config, home: &Path) -> Collected {
     let mut out = Collected::default();
     let machine = config.machine_name();
     for track in &config.tracks {
+        // Where this track's items begin. `out.items` accumulates across
+        // tracks, and renaming by walking all of it renamed every item
+        // collected so far — twenty-nine env files took an ssh key's rule.
+        let mine = out.items.len();
         collect_track(track, home, &mut out);
         // Naming happens after collection, so a glob still derives each file's
         // own name before the machine is added to it.
         if track.per_machine {
-            for item in out.items.iter_mut().filter(|i| i.machine.is_none()) {
+            for item in &mut out.items[mine..] {
                 item.name = format!("{}@{machine}", item.name);
                 item.machine = Some(machine.clone());
             }

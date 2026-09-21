@@ -52,6 +52,17 @@ struct Cli {
     #[arg(long, global = true, value_name = "LIST", env = "KITBAG_SKIP")]
     skip: Option<String>,
 
+    /// How many items to send at once. Each one is a process, and starting
+    /// them in a row is most of the wait
+    #[arg(
+        long,
+        global = true,
+        value_name = "N",
+        env = "KITBAG_JOBS",
+        default_value_t = 4
+    )]
+    jobs: usize,
+
     /// Machine-readable output
     #[arg(long, global = true)]
     json: bool,
@@ -252,9 +263,14 @@ fn main() -> Result<()> {
         Command::Lint { ref paths } => check::lint(paths, cli.json)?,
         Command::Diff { ref only } => run::diff(cli.backend.as_deref(), only, colour)?,
         Command::Resolve => run::resolve(cli.backend.as_deref(), wanted, colour)?,
-        Command::Push { dry_run, ref only } => {
-            run::push(cli.backend.as_deref(), wanted, dry_run, only, colour)?
-        }
+        Command::Push { dry_run, ref only } => run::push(
+            cli.backend.as_deref(),
+            wanted,
+            dry_run,
+            only,
+            cli.jobs,
+            colour,
+        )?,
         Command::Restore { dry_run, ref only } => {
             run::restore(cli.backend.as_deref(), wanted, dry_run, only, colour)?
         }

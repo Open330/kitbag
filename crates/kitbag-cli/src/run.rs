@@ -401,7 +401,7 @@ fn confirm(pending: usize) -> Result<bool> {
     Ok(matches!(answer.trim(), "y" | "Y" | "yes"))
 }
 
-fn open_store(name: Option<&str>) -> Result<Box<dyn Backend>> {
+fn open_store(name: Option<&str>) -> Result<Box<dyn Backend + Send + Sync>> {
     let name = name.unwrap_or("bw");
     let kind: BackendKind = name.parse()?;
     kind.open()
@@ -418,6 +418,7 @@ pub fn push(
     wanted: Option<Wanted>,
     dry_run: bool,
     only: &[String],
+    jobs: usize,
     colour: Colour,
 ) -> Result<()> {
     let home = home();
@@ -449,6 +450,8 @@ pub fn push(
     let mut held: Vec<(String, State)> = Vec::new();
     // The store is ahead on these; they are a restore's business.
     let mut behind: Vec<String> = Vec::new();
+    // Decided, not yet written.
+    let mut outgoing: Vec<(&kitbag_core::Item, State)> = Vec::new();
     progress.clear();
 
     let mut sent = 0usize;
@@ -508,25 +511,33 @@ pub fn push(
                 if dry_run {
                     progress.clear();
                     println!("  {} {:<28} would be sent", state.glyph(), item.name);
+                    sent += 1;
                 } else {
-                    let envelope = kitbag_core::collect::envelope_for(item, &home);
-                    let outcome = store.put(&item.name, &envelope);
-                    progress.clear();
-                    match outcome {
-                        Ok(()) => {
-                            // They agree now, and that is the point to compare
-                            // against next time.
-                            ledger.record(&item.name, &envelope.fingerprint());
-                            println!("  {} {:<28} sent", state.glyph(), item.name)
-                        }
-                        Err(e) => {
-                            println!("  ✗ {:<28} {}", item.name, root_cause(&e));
-                            failed.push((item.name.clone(), root_cause(&e)));
-                            continue;
-                        }
-                    }
+                    // Decided here, written below. Choosing what to send is
+                    // local and instant; sending it is a process per item, and
+                    // that is the entire wait.
+                    outgoing.push((item, state));
                 }
-                sent += 1;
+            }
+        }
+    }
+
+    if !outgoing.is_empty() {
+        let results = send_all(&*store, &outgoing, &home, jobs, &progress);
+        progress.clear();
+        for (name, state, outcome) in results {
+            match outcome {
+                Ok(fingerprint) => {
+                    // They agree now, and that is the point to compare against
+                    // next time.
+                    ledger.record(&name, &fingerprint);
+                    println!("  {} {:<28} sent", state.glyph(), name);
+                    sent += 1;
+                }
+                Err(why) => {
+                    println!("  ✗ {name:<28} {why}");
+                    failed.push((name, why));
+                }
             }
         }
     }
@@ -573,6 +584,76 @@ pub fn push(
         bail!("{} item(s) did not reach the store", failed.len());
     }
     Ok(())
+}
+
+/// What one send came to: the item, where it stood, and either the
+/// fingerprint the two now agree on or what went wrong.
+type Sent = (String, State, std::result::Result<String, String>);
+
+/// Send them, several at a time.
+///
+/// Every write is a process started, and starting them one after another is
+/// the whole of the wait: four `bw` calls take 9.8s in a row and 1.9s at once,
+/// on the machine this was measured on. The client keeps a lock on its own
+/// vault file, so the parallelism is in the waiting, not in the writing.
+///
+/// Order comes out as things finish rather than as they were listed. That is
+/// what actually happened, and pretending otherwise would mean holding the
+/// whole run back to print it tidily.
+fn send_all(
+    store: &(dyn Backend + Send + Sync),
+    outgoing: &[(&kitbag_core::Item, State)],
+    home: &Path,
+    jobs: usize,
+    progress: &ui::Progress,
+) -> Vec<Sent> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
+
+    let next = AtomicUsize::new(0);
+    let done = AtomicUsize::new(0);
+    let out: Mutex<Vec<Sent>> = Mutex::new(Vec::with_capacity(outgoing.len()));
+    let total = outgoing.len();
+    let workers = jobs.clamp(1, 16).min(total.max(1));
+
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            scope.spawn(|| loop {
+                let at = next.fetch_add(1, Ordering::Relaxed);
+                let Some((item, state)) = outgoing.get(at) else {
+                    return;
+                };
+                let envelope = kitbag_core::collect::envelope_for(item, home);
+                let result = match store.put(&item.name, &envelope) {
+                    Ok(()) => Ok(envelope.fingerprint()),
+                    Err(e) => Err(explain_failure(&e)),
+                };
+                let finished = done.fetch_add(1, Ordering::Relaxed) + 1;
+                progress.say(format!("{} — {finished}/{total}", item.name));
+                out.lock().unwrap_or_else(|e| e.into_inner()).push((
+                    item.name.clone(),
+                    *state,
+                    result,
+                ));
+            });
+        }
+    });
+
+    out.into_inner().unwrap_or_else(|e| e.into_inner())
+}
+
+/// What went wrong, in words that say what to do about it.
+///
+/// The store refuses a write built from a copy older than the one it holds,
+/// which is how it stops two machines overwriting each other — and which is
+/// exactly what happens when two of them push at once. Reported as the client
+/// words it, that reads as a mystery.
+fn explain_failure(e: &anyhow::Error) -> String {
+    let said = root_cause(e);
+    if said.contains("out of date") {
+        return format!("{said} (another machine changed it during this run — push again)");
+    }
+    said
 }
 
 /// The bottom of an error chain: what `bw` or the filesystem actually said,

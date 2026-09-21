@@ -64,7 +64,10 @@ pub struct Listing {
     pub machine: Option<String>,
 }
 
-pub trait Backend {
+/// Implementations are shared across threads: a push of thirty items is
+/// thirty processes started, and starting them one at a time is the whole of
+/// the wait.
+pub trait Backend: Send + Sync {
     fn capabilities(&self) -> Capabilities;
 
     /// Every item this store holds for kitbag — names and hashes, never values.
@@ -115,7 +118,7 @@ impl BackendKind {
         name.unwrap_or("bw").parse()
     }
 
-    pub fn open(self) -> Result<Box<dyn Backend>> {
+    pub fn open(self) -> Result<Box<dyn Backend + Send + Sync>> {
         match self {
             BackendKind::Memory => Ok(Box::new(MemoryBackend::default())),
             BackendKind::Bw => Ok(Box::new(bw::Bw::new()?)),

@@ -12,7 +12,22 @@ mkdir -p "$S/attachments"
 # so a test can assert how often kitbag asks for one.
 echo "$1 ${2:-}" >> "$S/calls.log"
 
-state() { python3 "$(dirname "${BASH_SOURCE[0]}")/fake-bw.py" "$S" "$@"; }
+# The real client locks its own vault file, so kitbag may send several items
+# at once. This stub reads a file, changes it and writes it back, which two
+# callers doing at once loses one of them — so it takes a lock. `mkdir` is the
+# atomic one that needs no extra tool.
+state() {
+    local lock="$S/.lock" waited=0
+    until mkdir "$lock" 2>/dev/null; do
+        sleep 0.02
+        waited=$((waited + 1))
+        [[ "$waited" -lt 500 ]] || { echo "fake bw: gave up waiting for the lock" >&2; return 1; }
+    done
+    python3 "$(dirname "${BASH_SOURCE[0]}")/fake-bw.py" "$S" "$@"
+    local code=$?
+    rmdir "$lock"
+    return "$code"
+}
 
 case "$1 ${2:-}" in
     "status ")      printf '{"status":"unlocked"}' ;;

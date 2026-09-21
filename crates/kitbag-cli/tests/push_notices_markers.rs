@@ -418,3 +418,133 @@ fn naming_it_after_a_machine_does_not_move_the_file() {
     let back = std::fs::read_to_string(a.path().join(".ssh/id_ed25519")).unwrap();
     assert!(back.contains("AAAAkeyofa"), "{back}");
 }
+
+#[test]
+fn per_machine_renames_its_own_track_and_nothing_else() {
+    // It renamed everything collected before it. Thirty items went into a real
+    // vault under names that meant nothing, because `out.items` accumulates
+    // across tracks and the rename walked all of it.
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    std::fs::create_dir_all(home.path().join(".envs")).unwrap();
+    std::fs::create_dir_all(home.path().join(".ssh")).unwrap();
+    std::fs::write(
+        home.path().join(".envs/one.env"),
+        "# scope: personal\nA=1\n",
+    )
+    .unwrap();
+    std::fs::write(
+        home.path().join(".envs/two.env"),
+        "# scope: personal\nB=2\n",
+    )
+    .unwrap();
+    let fence = format!("OPENSSH {} KEY", "PRIVATE");
+    std::fs::write(
+        home.path().join(".ssh/id_ed25519"),
+        format!("-----BEGIN {fence}-----\nAAAAkey\n-----END {fence}-----\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        home.path().join("machine.toml"),
+        "machine = \"box-a\"\nscopes = [\"personal\"]\n\n\
+         [[track]]\npath = \"~/.envs/*.env\"\n\n\
+         [[track]]\npath = \"~/.ssh/id_ed25519\"\nscope = \"personal\"\nper_machine = true\n",
+    )
+    .unwrap();
+
+    let out = kitbag(home.path(), state.path(), &["push", "--backend", "bw"]);
+
+    assert!(out.contains("ssh:id_ed25519@box-a"), "{out}");
+    assert!(
+        out.contains("env:one\n") || out.contains("env:one "),
+        "{out}"
+    );
+    assert!(
+        !out.contains("env:one@") && !out.contains("env:two@"),
+        "a machine name reached an item that is not per-machine:\n{out}"
+    );
+}
+
+#[test]
+fn a_per_machine_track_before_others_leaves_them_alone_too() {
+    // The same mistake in the other order: the rename must not reach forward
+    // into tracks collected after it either.
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    std::fs::create_dir_all(home.path().join(".envs")).unwrap();
+    std::fs::create_dir_all(home.path().join(".ssh")).unwrap();
+    std::fs::write(
+        home.path().join(".envs/one.env"),
+        "# scope: personal\nA=1\n",
+    )
+    .unwrap();
+    let fence = format!("OPENSSH {} KEY", "PRIVATE");
+    std::fs::write(
+        home.path().join(".ssh/id_ed25519"),
+        format!("-----BEGIN {fence}-----\nAAAAkey\n-----END {fence}-----\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        home.path().join("machine.toml"),
+        "machine = \"box-a\"\nscopes = [\"personal\"]\n\n\
+         [[track]]\npath = \"~/.ssh/id_ed25519\"\nscope = \"personal\"\nper_machine = true\n\n\
+         [[track]]\npath = \"~/.envs/*.env\"\n",
+    )
+    .unwrap();
+
+    let out = kitbag(home.path(), state.path(), &["push", "--backend", "bw"]);
+    assert!(out.contains("ssh:id_ed25519@box-a"), "{out}");
+    assert!(!out.contains("env:one@"), "{out}");
+}
+
+fn kitbag_with(home: &Path, state: &Path, args: &[&str]) -> String {
+    let out = Command::new(env!("CARGO_BIN_EXE_kitbag"))
+        .args(args)
+        .env("HOME", home)
+        .env("KITBAG_CONFIG", home.join("machine.toml"))
+        .env("KITBAG_BW", stub())
+        .env("KITBAG_FAKE_STATE", state)
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("kitbag runs");
+    String::from_utf8_lossy(&out.stdout).to_string()
+}
+
+#[test]
+fn every_item_arrives_however_many_go_at_once() {
+    // Sending several at a time is the difference between a push that takes a
+    // minute and one that takes seconds. It must not be the difference between
+    // a backup that is complete and one that is nearly complete.
+    for jobs in ["1", "4", "8"] {
+        let home = tempfile::tempdir().expect("home");
+        let state = tempfile::tempdir().expect("state");
+        std::fs::create_dir_all(home.path().join(".envs")).unwrap();
+        for n in 0..12 {
+            std::fs::write(
+                home.path().join(format!(".envs/f{n}.env")),
+                format!("# scope: personal\nK{n}=v\n"),
+            )
+            .unwrap();
+        }
+        std::fs::write(
+            home.path().join("machine.toml"),
+            "scopes = [\"personal\"]\n\n[[track]]\npath = \"~/.envs/*.env\"\n",
+        )
+        .unwrap();
+
+        let out = kitbag_with(
+            home.path(),
+            state.path(),
+            &["push", "--backend", "bw", "--jobs", jobs],
+        );
+        assert!(out.contains("12 sent"), "--jobs {jobs} sent fewer:\n{out}");
+        assert!(!out.contains("not sent"), "--jobs {jobs}:\n{out}");
+
+        // And the store holds twelve, not eleven.
+        let held = kitbag_with(home.path(), state.path(), &["push", "--backend", "bw"]);
+        assert!(
+            held.contains("0 sent, 12 already there"),
+            "--jobs {jobs} left something behind:\n{held}"
+        );
+    }
+}
