@@ -36,6 +36,16 @@ pub enum Difference {
         here_hash: String,
         there_hash: String,
     },
+    /// Text that is not `key = value`: an ssh config, a hosts file. The
+    /// leading word of a line is its directive and the rest is its operand,
+    /// so the directives can be counted and the operands stay unsaid.
+    Text {
+        here_lines: usize,
+        there_lines: usize,
+        /// Directive, and how many more of it the store has than this machine.
+        /// Negative means this machine has more.
+        directives: Vec<(String, isize)>,
+    },
     /// Both sides are archives, so what is in them can be said without
     /// saying what any of it contains.
     Archive {
@@ -58,9 +68,15 @@ impl Difference {
 
 /// `key -> hash of its value`. The hash is how two values are compared without
 /// either being held or shown.
+/// Key material is not configuration, whatever its punctuation or its words
+/// suggest. Checked before anything tries to read structure out of it, because
+/// base64 is made of things that look like names.
+fn is_key_material(text: &str) -> bool {
+    text.contains("PRIVATE KEY") || text.starts_with("ssh-") || text.contains("BEGIN ")
+}
+
 fn pairs(text: &str) -> Option<BTreeMap<String, String>> {
-    // A key file is not a settings file, whatever its punctuation suggests.
-    if text.contains("PRIVATE KEY") || text.starts_with("ssh-") {
+    if is_key_material(text) {
         return None;
     }
 
@@ -88,6 +104,37 @@ fn pairs(text: &str) -> Option<BTreeMap<String, String>> {
         return None;
     }
     Some(out)
+}
+
+/// How many lines start with each directive. `Host` in an ssh config, `server`
+/// in a config file: the first word says what a line is for, and everything
+/// after it is what a person put there.
+fn directives(text: &str) -> Option<BTreeMap<String, usize>> {
+    if is_key_material(text) {
+        return None;
+    }
+
+    let mut out: BTreeMap<String, usize> = BTreeMap::new();
+    let (mut lines, mut understood) = (0usize, 0usize);
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        lines += 1;
+        let mut words = line.split_whitespace();
+        let word = words.next().unwrap_or("").trim_end_matches('=');
+        // A directive is a word and then what it is set to. One word on its
+        // own is prose, or base64, or anything else — not a directive.
+        if words.next().is_some() && crate::collect::is_a_name(word) {
+            understood += 1;
+            *out.entry(word.to_string()).or_default() += 1;
+        }
+    }
+
+    // Most of it has to read as directives, or this is something else being
+    // described as though it were a config. Half a picture is worse than none.
+    (lines > 0 && understood * 2 >= lines).then_some(out)
 }
 
 /// What an archive holds: path to size. `None` when it is not one, or not one
@@ -160,6 +207,39 @@ pub fn describe(here: &[u8], there: &[u8]) -> Difference {
             here_count: a.len(),
             there_count: b.len(),
         };
+    }
+
+    // Text that is not settings, but is still text: say what kinds of line
+    // moved without saying any of them.
+    if let Some((here_text, there_text)) = both {
+        if let (Some(a), Some(b)) = (directives(here_text), directives(there_text)) {
+            let mut names: Vec<&String> = a.keys().chain(b.keys()).collect();
+            names.sort();
+            names.dedup();
+            let changed: Vec<(String, isize)> = names
+                .into_iter()
+                .filter(|n| {
+                    // A first word that repeats is a directive. One that
+                    // appears once is data wearing a directive's place: the
+                    // first field of a hosts file is an address, and prose
+                    // starts with a different word every line.
+                    a.get(*n)
+                        .copied()
+                        .unwrap_or(0)
+                        .max(b.get(*n).copied().unwrap_or(0))
+                        > 1
+                })
+                .filter_map(|n| {
+                    let delta = *b.get(n).unwrap_or(&0) as isize - *a.get(n).unwrap_or(&0) as isize;
+                    (delta != 0).then(|| (n.clone(), delta))
+                })
+                .collect();
+            return Difference::Text {
+                here_lines: lines_of(here_text),
+                there_lines: lines_of(there_text),
+                directives: changed,
+            };
+        }
     }
 
     Difference::Opaque {
@@ -297,11 +377,30 @@ mod archive_tests {
     }
 
     #[test]
-    fn what_is_not_an_archive_is_still_a_size_and_a_hash() {
-        assert!(matches!(
-            describe(b"not gzip", b"nor this"),
-            Difference::Opaque { .. }
-        ));
+    fn what_is_neither_text_nor_an_archive_is_a_size_and_a_hash() {
+        // Bytes that are not UTF-8 and not gzip: a keychain, a sqlite file,
+        // an image. There is nothing to say about them but how big and which.
+        let here = vec![0x00, 0xff, 0xfe, 0x01, 0x02];
+        let there = vec![0x00, 0xff, 0xfe, 0x03];
+        assert!(matches!(describe(&here, &there), Difference::Opaque { .. }));
+    }
+
+    #[test]
+    fn prose_is_not_mistaken_for_a_config() {
+        // Lines that are words rather than `directive operand` must not be
+        // reported as though their first word meant something.
+        let here = b"this is a note about the thing\nand a second line of it\n";
+        let there = b"this is a note about the thing\n";
+        match describe(here, there) {
+            Difference::Text { directives, .. } => {
+                assert!(
+                    directives.iter().all(|(n, _)| n != "this" && n != "and"),
+                    "prose read as directives: {directives:?}"
+                );
+            }
+            Difference::Opaque { .. } => {}
+            other => panic!("unexpected {other:?}"),
+        }
     }
 
     #[test]
@@ -324,6 +423,94 @@ mod archive_tests {
                 );
             }
             other => panic!("expected an archive, got {other:?}"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod text_tests {
+    use super::*;
+
+    #[test]
+    fn an_ssh_config_is_read_by_its_directives() {
+        // It has no `=` anywhere, so the settings parser gives up on it and it
+        // used to arrive as two byte counts — which is what a person was asked
+        // to choose between.
+        let here = b"Host a\n  HostName x\n  User u\n";
+        let there = b"Host a\n  HostName x\n  User u\nHost b\n  HostName y\n";
+        match describe(here, there) {
+            Difference::Text {
+                here_lines,
+                there_lines,
+                directives,
+            } => {
+                assert_eq!((here_lines, there_lines), (3, 5));
+                assert_eq!(directives, vec![("Host".into(), 1), ("HostName".into(), 1)]);
+            }
+            other => panic!("expected text, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn what_a_line_says_is_never_in_the_answer() {
+        // The directive is what kind of line it is; the operand is what a
+        // person put there, and internal host names are exactly that.
+        let here = b"Host bastion\n  HostName 10.0.0.1\n";
+        let there = b"Host bastion\n  HostName 10.0.0.2\n";
+        let rendered = format!("{:?}", describe(here, there));
+        assert!(
+            !rendered.contains("10.0.0"),
+            "an operand leaked: {rendered}"
+        );
+        assert!(
+            !rendered.contains("bastion"),
+            "an operand leaked: {rendered}"
+        );
+    }
+
+    #[test]
+    fn the_same_kinds_of_line_saying_different_things_is_still_reported() {
+        let here = b"Host a\n  HostName one\n";
+        let there = b"Host a\n  HostName two\n";
+        match describe(here, there) {
+            Difference::Text { directives, .. } => {
+                assert!(directives.is_empty(), "no directive count moved");
+            }
+            other => panic!("expected text, got {other:?}"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod leak_tests {
+    use super::*;
+
+    #[test]
+    fn the_first_field_of_a_hosts_file_is_not_a_directive() {
+        // Every line begins with an address, each one used once. Reporting
+        // those as "directives" would print the addresses.
+        let here = b"10.0.0.1 db\n10.0.0.2 web\n";
+        let there = b"10.0.0.1 db\n10.0.0.2 web\n10.0.0.3 cache\n";
+        let rendered = format!("{:?}", describe(here, there));
+        assert!(
+            !rendered.contains("10.0.0"),
+            "an address leaked: {rendered}"
+        );
+    }
+
+    #[test]
+    fn a_repeated_first_word_is_a_directive_and_is_reported() {
+        let here = b"Host a\n  HostName x\nHost b\n  HostName y\n";
+        let there = b"Host a\n  HostName x\n";
+        match describe(here, there) {
+            Difference::Text { directives, .. } => {
+                assert_eq!(
+                    directives,
+                    vec![("Host".into(), -1), ("HostName".into(), -1)],
+                    "the store has one host fewer"
+                );
+            }
+            other => panic!("expected text, got {other:?}"),
         }
     }
 }

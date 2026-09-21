@@ -1206,7 +1206,7 @@ pub fn diff(backend: Option<&str>, only: &[String], colour: Colour) -> Result<()
         }
 
         println!("  ~ {}", item.name);
-        describe_one(item, &theirs.payload);
+        describe_one(item, &theirs.payload, colour);
         shown += 1;
     }
 
@@ -1220,6 +1220,26 @@ pub fn diff(backend: Option<&str>, only: &[String], colour: Colour) -> Result<()
         println!("    kitbag push    --backend <name> --only <item>   send this machine's");
     }
     Ok(())
+}
+
+/// The three roles a line in a difference can have. Colour is a second way of
+/// saying what the label already says, for reading quickly — never the only
+/// way, so a terminal without it loses nothing.
+fn tinted(colour: Colour, code: &str, text: &str) -> String {
+    match colour {
+        Colour::Always => format!("\x1b[{code}m{text}\x1b[0m"),
+        Colour::Never => text.to_string(),
+    }
+}
+
+fn only_here(colour: Colour) -> String {
+    tinted(colour, "32", "only here: ")
+}
+fn only_there(colour: Colour) -> String {
+    tinted(colour, "36", "only there:")
+}
+fn differs(colour: Colour) -> String {
+    tinted(colour, "33", "differ:    ")
 }
 
 /// A list, shortened. An archive can hold dozens of paths and a question has
@@ -1265,7 +1285,7 @@ pub fn choice(answer: &str) -> Choice {
 
 /// What `diff` prints for one item, so `resolve` can show the same thing
 /// without a second round trip to the store.
-fn describe_one(item: &kitbag_core::Item, theirs: &[u8]) {
+fn describe_one(item: &kitbag_core::Item, theirs: &[u8], colour: Colour) {
     use kitbag_core::difference::{describe, Difference};
 
     match describe(&item.payload, theirs) {
@@ -1278,9 +1298,9 @@ fn describe_one(item: &kitbag_core::Item, theirs: &[u8]) {
         } => {
             println!("      here   {here_lines} lines");
             println!("      store  {there_lines} lines");
-            show_some("only here: ", &only_here);
-            show_some("only there:", &only_there);
-            show_some("differ:    ", &differing);
+            show_some(&self::only_here(colour), &only_here);
+            show_some(&self::only_there(colour), &only_there);
+            show_some(&differs(colour), &differing);
             if only_here.is_empty() && only_there.is_empty() && differing.is_empty() {
                 // Every setting agrees and the bytes do not: a comment, an
                 // ordering, a blank line. Saying nothing here left a person
@@ -1297,9 +1317,34 @@ fn describe_one(item: &kitbag_core::Item, theirs: &[u8]) {
         } => {
             println!("      here   {here_count} files");
             println!("      store  {there_count} files");
-            show_some("only here: ", &only_here);
-            show_some("only there:", &only_there);
-            show_some("differ:    ", &differing);
+            show_some(&self::only_here(colour), &only_here);
+            show_some(&self::only_there(colour), &only_there);
+            show_some(&differs(colour), &differing);
+        }
+        Difference::Text {
+            here_lines,
+            there_lines,
+            directives,
+        } => {
+            println!("      here   {here_lines} lines");
+            println!("      store  {there_lines} lines");
+            if directives.is_empty() {
+                println!("      the same kinds of line — the difference is in what they say");
+            }
+            for (name, delta) in directives {
+                // The operand is what a person wrote; the directive is what
+                // kind of thing it is, and only the second is said here.
+                let (label, code) = if delta > 0 {
+                    (format!("{delta} more"), "36")
+                } else {
+                    (format!("{} fewer", -delta), "32")
+                };
+                println!(
+                    "      {:<12} {} in the store",
+                    tinted(colour, code, &name),
+                    label
+                );
+            }
         }
         Difference::Opaque {
             here_bytes,
@@ -1376,7 +1421,7 @@ pub fn resolve(backend: Option<&str>, wanted: Option<Wanted>, colour: Colour) ->
         let theirs = store.get(&item.name)?;
 
         println!("  ! {}  ({}/{total})", item.name, at + 1);
-        describe_one(item, &theirs.payload);
+        describe_one(item, &theirs.payload, colour);
 
         print!("      [m]ine  [t]heirs  [s]kip  [q]uit > ");
         std::io::stdout().flush()?;
