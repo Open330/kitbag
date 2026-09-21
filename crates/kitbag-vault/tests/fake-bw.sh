@@ -18,6 +18,20 @@ echo "$1 ${2:-}" >> "$S/calls.log"
 # and took the rest of the run down with it.
 state() { python3 "$(dirname "${BASH_SOURCE[0]}")/fake-bw.py" "$S" "$@"; }
 
+# `create` and `edit` answer with the item, and kitbag parses that answer. A
+# stub that returns nothing there turns into "EOF while parsing a value at
+# line 1 column 0" several layers away, which says nothing about where it
+# happened — once, on a loaded CI runner, and not reproducibly. Now it says.
+speaks() {
+    local out
+    out="$(state "$@")"
+    if [[ -z "$out" ]]; then
+        echo "fake bw: state $1 produced nothing (args: $*)" >&2
+        exit 1
+    fi
+    printf '%s' "$out"
+}
+
 case "$1 ${2:-}" in
     "status ")      printf '{"status":"unlocked"}' ;;
     "sync ")        ;;   # the real one pulls the vault; here there is nowhere to pull from
@@ -31,7 +45,7 @@ case "$1 ${2:-}" in
         printf '{"id":"folder-1","name":"kitbag"}'
         ;;
 
-    "create item")      printf '%s' "$3" | base64 -d | state create ;;
+    "create item")      printf '%s' "$3" | base64 -d | speaks create ;;
     "edit item")
         # Armed by a test. The real client refuses a write whose base another
         # machine has moved past, and node's own deprecation chatter arrives
@@ -49,7 +63,7 @@ case "$1 ${2:-}" in
             echo "The client copy of this cipher is out of date. Resync the client and try again." >&2
             exit 1
         fi
-        printf '%s' "$4" | base64 -d | state edit "$3"
+        printf '%s' "$4" | base64 -d | speaks edit "$3"
         ;;
     "create attachment")
         file=""; itemid=""; prev=""

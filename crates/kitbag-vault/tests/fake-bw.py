@@ -17,7 +17,12 @@ items = json.loads(store.read_text()) if store.exists() else []
 
 
 def save():
-    store.write_text(json.dumps(items))
+    # Replaced rather than rewritten: a reader that arrives mid-write would
+    # otherwise see half a file, and the lock cannot help a process that is
+    # not this script.
+    tmp = store.with_suffix(".tmp")
+    tmp.write_text(json.dumps(items))
+    tmp.replace(store)
 
 
 def index_of(item_id):

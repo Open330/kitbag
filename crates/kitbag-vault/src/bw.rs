@@ -353,7 +353,16 @@ impl Backend for Bw {
             }
             None => {
                 let created = self.call(&["create", "item", &encoded], None)?;
-                let value: serde_json::Value = serde_json::from_str(&created)?;
+                // A client that exits happily with nothing on stdout is the
+                // shape a dropped session takes, and "EOF while parsing a
+                // value at line 1 column 0" is not a sentence anyone can act
+                // on. Say which item and which call.
+                let value: serde_json::Value = serde_json::from_str(&created).map_err(|e| {
+                    self.explain(anyhow!(
+                        "{name}: bw create said nothing usable ({} bytes): {e}",
+                        created.len()
+                    ))
+                })?;
                 value
                     .get("id")
                     .and_then(|i| i.as_str())
