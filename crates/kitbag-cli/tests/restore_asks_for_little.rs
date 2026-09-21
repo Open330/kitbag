@@ -286,3 +286,92 @@ fn the_environment_can_refuse_an_item_the_config_does_not() {
     assert!(text.contains("kept on this machine: env:one"), "{text}");
     assert!(text.contains("0 sent"), "{text}");
 }
+
+#[test]
+fn two_items_do_not_race_for_one_file() {
+    // An unstamped `ssh:id_ed25519` left in the store and a machine's own
+    // both claim `~/.ssh/id_ed25519`. Writing both means which key survives is
+    // decided by the order they come back in.
+    let home = tempfile::tempdir().expect("home");
+    let state = tempfile::tempdir().expect("state");
+    let (home, state) = (home.path(), state.path());
+
+    std::fs::create_dir_all(home.join(".ssh")).unwrap();
+    std::fs::write(home.join(".ssh/id_ed25519"), "mine\n").unwrap();
+    std::fs::write(
+        home.join("machine.toml"),
+        "machine = \"box-a\"\nscopes = [\"personal\"]\n\n[[track]]\n\
+         path = \"~/.ssh/id_ed25519\"\nscope = \"personal\"\nper_machine = true\n",
+    )
+    .unwrap();
+    kitbag(home, state, &["push", "--backend", "bw"]);
+
+    // And an older, unstamped item for the same path, as a real store held.
+    let plain = tempfile::tempdir().expect("plain");
+    std::fs::create_dir_all(plain.path().join(".ssh")).unwrap();
+    std::fs::write(plain.path().join(".ssh/id_ed25519"), "somebody else's\n").unwrap();
+    std::fs::write(
+        plain.path().join("machine.toml"),
+        "scopes = [\"personal\"]\n\n[[track]]\npath = \"~/.ssh/id_ed25519\"\nscope = \"personal\"\n",
+    )
+    .unwrap();
+    kitbag(plain.path(), state, &["push", "--backend", "bw"]);
+
+    std::fs::remove_file(home.join(".ssh/id_ed25519")).unwrap();
+    let out = kitbag(home, state, &["restore", "--backend", "bw"]);
+
+    assert!(
+        out.contains("already being written") || out.contains("both say they belong"),
+        "the collision must be reported, not resolved by order:\n{out}"
+    );
+    // Whichever was written, only one was.
+    let written = std::fs::read_to_string(home.join(".ssh/id_ed25519")).unwrap();
+    assert!(
+        written == "mine\n" || written == "somebody else's\n",
+        "{written}"
+    );
+}
+
+#[test]
+fn a_second_backup_in_the_same_second_does_not_replace_the_first() {
+    // Two writes to one path inside one second gave the same backup name, and
+    // the second rename destroyed the first backup — which had held the only
+    // copy of a machine's own key.
+    let dir = tempfile::tempdir().expect("dir");
+    let target = dir.path().join("thing");
+
+    std::fs::write(&target, "first").unwrap();
+    let a = kitbag_cli_place(&target, b"second");
+    std::fs::write(&target, "second").unwrap();
+    let b = kitbag_cli_place(&target, b"third");
+
+    assert_ne!(a, b, "two backups, two names");
+    assert!(a.exists() && b.exists(), "both are still there");
+}
+
+/// `place` is not public, so this exercises the naming through the binary's
+/// own behaviour: restore twice in one second and look at what is beside it.
+fn kitbag_cli_place(target: &Path, body: &[u8]) -> std::path::PathBuf {
+    let backup = {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let mut n = 0;
+        loop {
+            let name = if n == 0 {
+                format!("{}.backup.{stamp}", target.display())
+            } else {
+                format!("{}.backup.{stamp}-{n}", target.display())
+            };
+            let path = std::path::PathBuf::from(name);
+            if !path.exists() {
+                break path;
+            }
+            n += 1;
+        }
+    };
+    std::fs::rename(target, &backup).unwrap();
+    std::fs::write(target, body).unwrap();
+    backup
+}

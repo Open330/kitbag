@@ -722,6 +722,9 @@ pub fn restore(
     let mut ahead: Vec<String> = Vec::new();
     // Another machine's own, kept in the store for that machine.
     let mut theirs: Vec<String> = Vec::new();
+    // Where each item is going, so two of them cannot go to one place.
+    let mut claimed: BTreeMap<PathBuf, String> = BTreeMap::new();
+    let mut contested: Vec<(String, String, String)> = Vec::new();
     let this_machine = config.machine_name();
     let here = kitbag_core::this_platform();
 
@@ -892,6 +895,22 @@ pub fn restore(
         };
         let dest = &dest;
 
+        // Two items wanting the same file is not a race to settle by writing
+        // both: an unstamped `ssh:id_ed25519` left in the store and this
+        // machine's own landed on the same path, one after the other, and
+        // which key survived was decided by their order.
+        if let Some(first) = claimed.get(dest.as_path()) {
+            progress.clear();
+            println!(
+                "  ! {:<28} {} is already being written by {first}",
+                listing.name,
+                pretty(dest, &home)
+            );
+            contested.push((listing.name.clone(), first.clone(), pretty(dest, &home)));
+            continue;
+        }
+        claimed.insert(dest.clone(), listing.name.clone());
+
         if std::fs::read(dest)
             .map(|b| b == envelope.payload)
             .unwrap_or(false)
@@ -956,6 +975,17 @@ pub fn restore(
         for name in &kept_back {
             println!("  · {name}");
         }
+    }
+    if !contested.is_empty() {
+        println!();
+        println!(
+            "  {} want a file another item is already writing:",
+            contested.len()
+        );
+        for (name, first, path) in &contested {
+            println!("  · {name} and {first} both say they belong at {path}");
+        }
+        println!("  Only the first was written. Remove whichever of them should not exist.");
     }
     if !theirs.is_empty() {
         println!();
@@ -1047,8 +1077,25 @@ fn backup_beside(path: &Path) -> PathBuf {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let mut name = path.as_os_str().to_os_string();
-    name.push(format!(".backup.{stamp}"));
+    let base = path.as_os_str().to_os_string();
+
+    // Seconds are not fine enough. Two writes to one path inside the same
+    // second gave the same backup name, and the second rename destroyed the
+    // first backup — which held the only copy of a machine's own SSH key.
+    for n in 0..1000 {
+        let mut name = base.clone();
+        if n == 0 {
+            name.push(format!(".backup.{stamp}"));
+        } else {
+            name.push(format!(".backup.{stamp}-{n}"));
+        }
+        let candidate = PathBuf::from(name);
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    let mut name = base;
+    name.push(format!(".backup.{stamp}-full"));
     PathBuf::from(name)
 }
 
@@ -1552,10 +1599,21 @@ pub fn resolve(backend: Option<&str>, wanted: Option<Wanted>, colour: Colour) ->
         match choice(&answer) {
             Choice::Mine => {
                 let envelope = kitbag_core::collect::envelope_for(item, &home);
-                store.put(&item.name, &envelope)?;
-                ledger.record(&item.name, &envelope.fingerprint());
-                println!("      sent this machine's\n");
-                settled += 1;
+                // One item the store will not take must not end the
+                // conversation about the rest: another machine pushing at the
+                // same moment makes the store refuse this write, and that is
+                // a thing to say and carry on from.
+                match store.put(&item.name, &envelope) {
+                    Ok(()) => {
+                        ledger.record(&item.name, &envelope.fingerprint());
+                        println!("      sent this machine's\n");
+                        settled += 1;
+                    }
+                    Err(e) => {
+                        println!("      not sent: {}\n", explain_failure(&e));
+                        unreadable.push((item.name.clone(), explain_failure(&e)));
+                    }
+                }
             }
             Choice::Theirs => {
                 match theirs.destination(&home) {
@@ -1597,7 +1655,7 @@ pub fn resolve(backend: Option<&str>, wanted: Option<Wanted>, colour: Colour) ->
     println!("  {settled} settled, {} left.", total - settled);
     if !unreadable.is_empty() {
         println!();
-        println!("  {} could not be read from the store:", unreadable.len());
+        println!("  {} did not settle:", unreadable.len());
         for (name, why) in &unreadable {
             println!("  · {name}: {why}");
         }
