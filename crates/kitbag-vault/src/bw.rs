@@ -404,8 +404,21 @@ impl Backend for Bw {
         // trait refuses: it removes a copy of this item's own payload that this
         // tool wrote and has just superseded, never an item, and never anything
         // it did not put there itself.
+        //
+        // And it cannot fail the write. The new copy is already up — that is
+        // the whole reason it goes first — so failing here reports an item as
+        // not sent when it was, leaves the agreement unrecorded, and sends it
+        // again next time to fail in the same place. Two of these machines sat
+        // stuck on one item for that reason, one because the attachment had
+        // already gone and one because the client threw.
         for old in replaced {
-            self.call(&["delete", "attachment", &old, "--itemid", &id], None)?;
+            if let Err(e) = self.call(&["delete", "attachment", &old, "--itemid", &id], None) {
+                eprintln!(
+                    "  kitbag: {name} is up to date, but an old copy of its \
+                     attachment could not be removed: {}",
+                    first_line(&e.to_string())
+                );
+            }
         }
 
         // The new attachment's id is bw's to assign, and caching a guess at it

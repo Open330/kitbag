@@ -154,3 +154,29 @@ fn what_was_written_is_readable_without_asking_the_vault_again() {
         assert_eq!(calls(state, "list items"), 1);
     });
 }
+
+#[test]
+fn a_payload_is_sent_even_when_the_old_copy_will_not_go() {
+    // The new copy goes up first so that a failure after it is survivable.
+    // Treating one as fatal reported an item as not sent when it was, left
+    // the agreement unrecorded, and sent it again next run to fail in the
+    // same place — two machines were stuck on one item like that.
+    with_fake_bw(|state| {
+        let store = Bw::new().expect("unlocked");
+        store.put("app:big", &big_envelope(40_000)).expect("first");
+
+        // From here the stub refuses every delete, as the real client did.
+        std::fs::write(state.join("refuse-delete"), "1").expect("arm the refusal");
+
+        let second = Envelope::new(Scope::Personal, vec![b'j'; 40_000]);
+        store
+            .put("app:big", &second)
+            .expect("a cleanup that fails is not a write that failed");
+
+        assert_eq!(
+            store.get("app:big").expect("get").payload,
+            second.payload,
+            "and the newer payload is what comes back"
+        );
+    });
+}

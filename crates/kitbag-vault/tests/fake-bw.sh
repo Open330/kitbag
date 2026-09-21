@@ -66,6 +66,8 @@ case "$1 ${2:-}" in
         cp "$S/attachments/$(state find-attachment "$itemid" "$3")" "$out"
         ;;
     "delete attachment")
+        # Armed by a test: the real client failed here two different ways.
+        [[ -f "$S/refuse-delete" ]] && { echo "fake bw: refusing" >&2; exit 1; }
         itemid=""; prev=""
         for a in "$@"; do [[ "$prev" == "--itemid" ]] && itemid="$a"; prev="$a"; done
         state detach "$itemid" "$3"
