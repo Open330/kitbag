@@ -524,11 +524,35 @@ fn run(args: &[&str], session: Option<&str>, stdin: Option<&[u8]>) -> Result<Str
     Ok(String::from_utf8_lossy(&out.stdout).to_string())
 }
 
+/// The line of a client's stderr that says what went wrong.
+///
+/// Taking the first non-empty one gives the right answer for a message and
+/// the wrong one for a crash: node prints the file and line it threw at
+/// first, so a run reported
+///
+/// ```text
+/// Error: bw get: /…/@bitwarden/cli/build/bw.js:53662
+/// ```
+///
+/// and kept the reason to itself. A thrown error names its kind before its
+/// message — `TypeError: …` — so that is what to look for, and the first
+/// non-empty line is what to fall back on.
 fn first_line(s: &str) -> String {
+    let named = s.lines().map(str::trim).find(|l| {
+        l.split_once(": ").is_some_and(|(kind, rest)| {
+            kind.ends_with("Error")
+                && !kind.contains('/')
+                && kind.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                && !rest.is_empty()
+        })
+    });
+    if let Some(line) = named {
+        return line.to_string();
+    }
     s.lines()
-        .find(|l| !l.trim().is_empty())
+        .map(str::trim)
+        .find(|l| !l.is_empty())
         .unwrap_or("no message")
-        .trim()
         .to_string()
 }
 
@@ -628,5 +652,35 @@ mod tests {
     fn an_error_is_reported_by_its_first_useful_line() {
         assert_eq!(first_line("\n\n  boom  \nand then some\n"), "boom");
         assert_eq!(first_line(""), "no message");
+    }
+
+    #[test]
+    fn a_crash_is_reported_by_what_it_says_not_where_it_happened() {
+        // What a real run produced, and what it left out.
+        // The path is stubbed: a real one names a person, and this file is
+        // linted for exactly that.
+        let crash = "/…/node_modules/\
+                     @bitwarden/cli/build/bw.js:53662\n\
+                     \x20           throw new Error(t);\n\
+                     \x20           ^\n\n\
+                     TypeError: e.getSingleMessage is not a function\n\
+                     \x20   at x (/…/bw.js:53662:19)\n";
+        assert_eq!(
+            first_line(crash),
+            "TypeError: e.getSingleMessage is not a function"
+        );
+    }
+
+    #[test]
+    fn a_plain_message_is_still_the_plain_message() {
+        // The client's own errors are not thrown, and must not be skipped past.
+        assert_eq!(
+            first_line("Attachment `abc` was not found.\n"),
+            "Attachment `abc` was not found."
+        );
+        assert_eq!(
+            first_line("The client copy of this cipher is out of date.\n"),
+            "The client copy of this cipher is out of date."
+        );
     }
 }

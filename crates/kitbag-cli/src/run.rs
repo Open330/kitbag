@@ -1525,8 +1525,21 @@ pub fn resolve(backend: Option<&str>, wanted: Option<Wanted>, colour: Colour) ->
 
     let total = unsettled.len();
     let mut settled = 0usize;
+    let mut unreadable: Vec<(String, String)> = Vec::new();
     for (at, item) in unsettled.iter().enumerate() {
-        let theirs = store.get(&item.name)?;
+        // One item the store will not hand over must not end the conversation
+        // about the other three. The client crashed on one of these, and the
+        // whole run stopped.
+        let theirs = match store.get(&item.name) {
+            Ok(envelope) => envelope,
+            Err(e) => {
+                println!("  ! {}  ({}/{total})", item.name, at + 1);
+                println!("      could not be read: {}", root_cause(&e));
+                println!("      left alone\n");
+                unreadable.push((item.name.clone(), root_cause(&e)));
+                continue;
+            }
+        };
 
         println!("  ! {}  ({}/{total})", item.name, at + 1);
         describe_one(item, &theirs.payload, colour);
@@ -1582,6 +1595,13 @@ pub fn resolve(backend: Option<&str>, wanted: Option<Wanted>, colour: Colour) ->
         println!("  could not record what was exchanged: {e}");
     }
     println!("  {settled} settled, {} left.", total - settled);
+    if !unreadable.is_empty() {
+        println!();
+        println!("  {} could not be read from the store:", unreadable.len());
+        for (name, why) in &unreadable {
+            println!("  · {name}: {why}");
+        }
+    }
     Ok(())
 }
 
