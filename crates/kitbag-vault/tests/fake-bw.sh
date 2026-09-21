@@ -32,7 +32,25 @@ case "$1 ${2:-}" in
         ;;
 
     "create item")      printf '%s' "$3" | base64 -d | state create ;;
-    "edit item")        printf '%s' "$4" | base64 -d | state edit "$3" ;;
+    "edit item")
+        # Armed by a test. The real client refuses a write whose base another
+        # machine has moved past, and node's own deprecation chatter arrives
+        # on the same stream, ahead of the reason.
+        if [[ -f "$S/stale-once" || -f "$S/refuse-edit" ]]; then
+            rm -f "$S/stale-once"
+            # Optionally, that other machine's write actually lands, which is
+            # what turns the second look into a conflict rather than a retry.
+            if [[ -f "$S/stale-also-writes" ]]; then
+                rm -f "$S/stale-also-writes"
+                state bump "$3"
+            fi
+            echo "(node:73029) [DEP0040] DeprecationWarning: The \`punycode\` module is deprecated." >&2
+            echo "(Use \`node --trace-deprecation ...\` to show where the warning was created)" >&2
+            echo "The client copy of this cipher is out of date. Resync the client and try again." >&2
+            exit 1
+        fi
+        printf '%s' "$4" | base64 -d | state edit "$3"
+        ;;
     "create attachment")
         file=""; itemid=""; prev=""
         for a in "$@"; do

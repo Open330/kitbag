@@ -47,6 +47,13 @@ elif op == "edit":
     save()
     print(json.dumps(new))
 
+elif op == "bump":
+    # Somebody else's write, landing between this machine's decision and its
+    # own. The note is what the fingerprint is taken from.
+    at = index_of(sys.argv[3])
+    items[at]["notes"] = items[at].get("notes", "") + "\nSOMEBODY=else\n"
+    save()
+
 elif op == "attach":
     item_id, att_id, name = sys.argv[3], sys.argv[4], sys.argv[5]
     items[index_of(item_id)].setdefault("attachments", []).append(

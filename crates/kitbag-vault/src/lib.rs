@@ -85,6 +85,15 @@ pub trait Backend: Send + Sync {
     /// removes something that mattered. Removal is a person's decision, taken
     /// with the store's own client.
     fn put(&self, name: &str, envelope: &Envelope) -> Result<()>;
+
+    /// Forget whatever is cached about the store, so the next question goes
+    /// back to it. A client that keeps its own copy of the vault answers from
+    /// that copy, and when another machine has written since, the copy is a
+    /// record of an argument already lost. A store with no cache has nothing
+    /// to do here, which is why this does nothing by default.
+    fn refresh(&self) -> Result<()> {
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

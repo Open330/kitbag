@@ -542,6 +542,75 @@ pub fn push(
         }
     }
 
+    // Four machines pushing at the same moment is the ordinary case here, not
+    // the unlucky one, and the store refuses a write whose base it has since
+    // moved past: "the client copy of this cipher is out of date". That is not
+    // a result to report and stop on — it is a reason to look again.
+    //
+    // Looking again means comparing afresh, not sending harder. Between the
+    // decision and the write, another machine put something there; whether
+    // this item is still this machine's to send is exactly the question the
+    // comparison answers, and an item that has become a conflict in the last
+    // four seconds is a conflict.
+    if !dry_run && failed.iter().any(|(_, why)| why.contains("out of date")) {
+        let (stale, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut failed)
+            .into_iter()
+            .partition(|(_, why)| why.contains("out of date"));
+        failed = rest;
+
+        progress.say("another machine wrote during this run — reading the store again");
+        store.refresh()?;
+        let remote: Remote = store
+            .list()?
+            .into_iter()
+            .map(|l| (l.name, l.fingerprint))
+            .collect();
+
+        let mut again: Vec<(&kitbag_core::Item, State)> = Vec::new();
+        for (name, why) in stale {
+            let Some(item) = items.iter().find(|i| i.name == name) else {
+                failed.push((name, why));
+                continue;
+            };
+            let state = kitbag_core::state::compare_against(item, &remote, &home, &ledger);
+            if !state.is_decided() && only.is_empty() {
+                held.push((name, state));
+            } else if matches!(state, State::Behind) {
+                behind.push(name);
+            } else if matches!(state, State::Unchanged) {
+                // The other machine wrote what this one was about to. There is
+                // nothing left to send and the two now agree, which is the
+                // thing worth recording.
+                ledger.record(
+                    &name,
+                    &kitbag_core::collect::envelope_for(item, &home).fingerprint(),
+                );
+                same += 1;
+            } else {
+                again.push((item, state));
+            }
+        }
+
+        if !again.is_empty() {
+            let results = send_all(&*store, &again, &home, jobs, &progress);
+            progress.clear();
+            for (name, state, outcome) in results {
+                match outcome {
+                    Ok(fingerprint) => {
+                        ledger.record(&name, &fingerprint);
+                        println!("  {} {:<28} sent, second time", state.glyph(), name);
+                        sent += 1;
+                    }
+                    Err(why) => {
+                        println!("  ✗ {name:<28} {why}");
+                        failed.push((name, why));
+                    }
+                }
+            }
+        }
+        progress.clear();
+    }
+
     drop(progress);
     println!();
     if dry_run {

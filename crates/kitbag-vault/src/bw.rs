@@ -324,6 +324,11 @@ impl Backend for Bw {
         Ok(Envelope::parse(&text)?)
     }
 
+    fn refresh(&self) -> Result<()> {
+        *self.items.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        Ok(())
+    }
+
     fn put(&self, name: &str, envelope: &Envelope) -> Result<()> {
         let folder = self.ensure_folder()?;
         let existing = self.item_named(name)?;
@@ -537,8 +542,20 @@ fn run(args: &[&str], session: Option<&str>, stdin: Option<&[u8]>) -> Result<Str
 /// and kept the reason to itself. A thrown error names its kind before its
 /// message — `TypeError: …` — so that is what to look for, and the first
 /// non-empty line is what to fall back on.
+/// Node's own chatter, which arrives on the same stream as the reason a
+/// command failed and — being first — gets read as that reason. A store's
+/// error is never a deprecation notice about a module nobody here imported.
+fn is_runtime_noise(l: &str) -> bool {
+    l.starts_with("(node:")
+        || l.starts_with("(Use `node")
+        || l.contains("DeprecationWarning:")
+        || l.contains("ExperimentalWarning:")
+        || l.starts_with("(node")
+}
+
 fn first_line(s: &str) -> String {
-    let named = s.lines().map(str::trim).find(|l| {
+    let lines = || s.lines().map(str::trim).filter(|l| !is_runtime_noise(l));
+    let named = lines().find(|l| {
         l.split_once(": ").is_some_and(|(kind, rest)| {
             kind.ends_with("Error")
                 && !kind.contains('/')
@@ -549,9 +566,11 @@ fn first_line(s: &str) -> String {
     if let Some(line) = named {
         return line.to_string();
     }
-    s.lines()
-        .map(str::trim)
+    // Everything that was not noise, and then — only if that leaves nothing —
+    // the noise, because a message nobody can act on still beats silence.
+    lines()
         .find(|l| !l.is_empty())
+        .or_else(|| s.lines().map(str::trim).find(|l| !l.is_empty()))
         .unwrap_or("no message")
         .to_string()
 }
@@ -681,6 +700,35 @@ mod tests {
         assert_eq!(
             first_line("The client copy of this cipher is out of date.\n"),
             "The client copy of this cipher is out of date."
+        );
+    }
+
+    #[test]
+    fn node_shouting_about_punycode_is_not_the_reason_a_write_failed() {
+        let said = "(node:73029) [DEP0040] DeprecationWarning: The `punycode` module is \
+                    deprecated.\n(Use `node --trace-deprecation ...` to show where the \
+                    warning was created)\nThe client copy of this cipher is out of date. \
+                    Resync the client and try again.\n";
+        assert_eq!(
+            first_line(said),
+            "The client copy of this cipher is out of date. Resync the client and try again."
+        );
+    }
+
+    #[test]
+    fn a_named_error_is_still_preferred_over_whatever_came_first() {
+        let said = "(node:1) [DEP0040] DeprecationWarning: nobody asked\n\
+                    /usr/lib/node_modules/thing.js:14\n\
+                    AuthError: the session expired\n";
+        assert_eq!(first_line(said), "AuthError: the session expired");
+    }
+
+    #[test]
+    fn noise_and_nothing_else_is_reported_rather_than_swallowed() {
+        let said = "(node:99) [DEP0040] DeprecationWarning: all there was\n";
+        assert_eq!(
+            first_line(said),
+            "(node:99) [DEP0040] DeprecationWarning: all there was"
         );
     }
 }
