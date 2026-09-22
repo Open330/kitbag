@@ -58,9 +58,20 @@ A machine declares which scopes it takes. A personal laptop never restores work
 credentials; a work machine does not install your personal toys. The same filter
 decides what a push sends, what a restore writes, and what a report shows.
 
-This is the part with no equivalent elsewhere. chezmoi manages dotfiles;
-1Password CLI manages secrets; neither can answer "what on this machine belongs
-to my employer, and what happens to it when I leave".
+This is the part with no equivalent elsewhere, and it is worth being precise
+about what "elsewhere" already does. chezmoi moves dotfiles *and* credentials —
+seventeen password-manager integrations, age and gpg encryption — varies them
+per machine with templates, installs packages, and runs on Windows. Its axis
+of variation is **which machine**. kitbag's is **whose**, and "what on this
+machine belongs to my employer, and what happens to it when I leave" is not a
+question templates answer.
+
+What chezmoi gets for free by keeping its source of truth in git is a real
+merge: two machines that both edited a file end up with both versions. A
+key-value store has no history, so kitbag's `resolve` picks a winner and the
+other copy is gone. That is the sharpest thing this design gives up, and it is
+given up knowingly — the store has to be somewhere a credential is allowed to
+live, and that rules out a repository.
 
 ## 4. Command surface
 

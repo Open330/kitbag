@@ -444,12 +444,22 @@ export TOKEN=…
 
 ## 비슷한 도구들
 
-[chezmoi](https://www.chezmoi.io/)와 [yadm](https://yadm.io/)은 dotfiles를 잘
-관리하지만 소유권을 모델링하지 않고 자격증명을 옮기지 않습니다.
+[chezmoi](https://www.chezmoi.io/)가 이 분야의 성숙한 도구이고, 이것보다 많은
+일을 합니다: 기계별 차이를 위한 템플릿, age·gpg 전체 파일 암호화, 비밀번호
+관리자 17종 연동, 스크립트, 선언적 패키지 설치, 그리고 Windows. **dotfiles를
+여러 기계에 두고 싶다면 chezmoi를 쓰십시오.** 진실의 출처가 git 저장소라서,
+두 기계가 같은 파일을 고쳐도 진짜 병합이 일어나고 양쪽이 다 살아남습니다 —
+키-값 저장소는 줄 수 없는 것이고, kitbag이 포기한 가장 분명한 것입니다.
+
+chezmoi에 없는 것은 **소유자**입니다. chezmoi가 나누는 축은 *어느 기계*이고,
+kitbag이 나누는 축은 *누구 것*입니다. "이 기계에서 무엇이 회사 것이고, 내가
+떠날 때 그것들은 어떻게 되는가"는 템플릿이 답하는 질문이 아니고, 이것이 이
+도구가 존재하는 유일한 이유입니다.
+
+[yadm](https://yadm.io/)은 `$HOME` 위의 git이고 chezmoi와 같은 모양입니다.
 [1Password CLI](https://developer.1password.com/docs/cli/)와
 [SOPS](https://github.com/getsops/sops)는 비밀을 다루지 기계를 다루지 않습니다.
 [Mackup](https://github.com/lra/mackup)은 앱 상태를 옮겼지만 관리가 중단됐습니다.
-kitbag은 그 교집합입니다 — **어디에 있든 개인 상태를, 소유자를 붙여서.**
 
 ## 빌드
 

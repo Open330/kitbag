@@ -471,13 +471,24 @@ taken with the store's own client.
 
 ## Prior art
 
-[chezmoi](https://www.chezmoi.io/) and [yadm](https://yadm.io/) manage dotfiles
-and do it well; neither models ownership or moves credentials.
+[chezmoi](https://www.chezmoi.io/) is the mature tool in this space and does
+more than this one: templates for per-machine differences, full-file
+encryption with age or gpg, seventeen password-manager integrations, scripts,
+declarative package installation, and Windows. If you want your dotfiles on
+several machines, use chezmoi. Its source of truth is a git repository, which
+means two machines that both changed a file get a real merge and both versions
+survive — something a key-value store cannot offer, and the clearest thing
+kitbag gives up.
+
+What chezmoi does not have is an **owner**. Its axis of variation is *which
+machine*; kitbag's is *whose*. "What on this machine belongs to my employer,
+and what happens to it when I leave" is not a question templates answer, and
+it is the only reason this exists.
+
+[yadm](https://yadm.io/) is git over `$HOME` and shares chezmoi's shape.
 [1Password CLI](https://developer.1password.com/docs/cli/) and
 [SOPS](https://github.com/getsops/sops) manage secrets and not the machine.
 [Mackup](https://github.com/lra/mackup) moved app state and is unmaintained.
-kitbag is the overlap: personal state, wherever it lives, with an owner
-attached.
 
 ## Building
 
