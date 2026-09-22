@@ -155,3 +155,51 @@ fn a_scope_this_version_does_not_know_is_refused_before_anything_is_written() {
     assert!(!out.status.success());
     assert!(!home.path().join("machine.toml").exists());
 }
+
+#[test]
+fn what_was_added_can_be_read_back_as_it_was_written() {
+    // `status` answers a different question: it shows the items a track came
+    // to. Somebody who typed one line and got back two file names has no way
+    // to see the line they wrote.
+    let home = home_with_a_mixed_directory();
+    kitbag(home.path(), &["add", "~/work/deploy", "--scope", "work"]);
+
+    let listed = kitbag(home.path(), &["tracked"]);
+    assert!(listed.contains("~/work/deploy/*"), "{listed}");
+    assert!(listed.contains("work"), "{listed}");
+    assert!(listed.contains("1 track"), "{listed}");
+}
+
+#[test]
+fn a_filter_that_left_something_out_says_how_much() {
+    // A filter nobody can see is one nobody can correct. This is the only
+    // place its effect is visible: `status` shows what came through, and
+    // silence about the rest reads as "there was nothing else".
+    let home = home_with_a_mixed_directory();
+    kitbag(home.path(), &["add", "~/work/deploy", "--scope", "work"]);
+    let listed = kitbag(home.path(), &["tracked"]);
+    assert!(listed.contains("scripts only"), "{listed}");
+    assert!(listed.contains("filtered out"), "{listed}");
+}
+
+#[test]
+fn a_track_whose_file_is_not_here_says_so_rather_than_looking_fine() {
+    // Believing a path is kept when nothing is there is the failure this
+    // whole tool exists to avoid.
+    let home = tempfile::tempdir().expect("a home");
+    std::fs::write(
+        home.path().join("machine.toml"),
+        "scopes = [\"personal\"]\n\n[[track]]\npath = \"~/.npmrc\"\nscope = \"personal\"\n",
+    )
+    .unwrap();
+    let listed = kitbag(home.path(), &["tracked"]);
+    assert!(listed.contains("nothing here"), "{listed}");
+}
+
+#[test]
+fn a_machine_that_keeps_nothing_says_where_to_start() {
+    let home = tempfile::tempdir().expect("a home");
+    let listed = kitbag(home.path(), &["tracked"]);
+    assert!(listed.contains("Nothing tracked yet"), "{listed}");
+    assert!(listed.contains("kitbag add"), "{listed}");
+}

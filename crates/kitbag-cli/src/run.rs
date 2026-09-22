@@ -1613,7 +1613,7 @@ pub fn add(
         );
     }
 
-    println!("  `kitbag status` shows it; `kitbag push` sends it.");
+    println!("  `kitbag tracked` lists it; `kitbag push` sends it.");
     Ok(())
 }
 
@@ -2652,6 +2652,128 @@ pub fn catalogue(json: bool) -> Result<()> {
     println!("  A path already listed above replaces that entry rather than");
     println!("  adding a second one, which is how a place kitbag guessed wrong");
     println!("  about gets corrected.");
+    Ok(())
+}
+
+/// What this machine has been told to keep, as it was told.
+///
+/// `status` shows the items a track produced, which is the right answer to a
+/// different question. Somebody who typed `kitbag add ~/work/deploy` and got
+/// back two file names has no way to see the line they wrote, or to notice
+/// that a third file in that directory was filtered out — and a filter nobody
+/// can see is one nobody can correct.
+pub fn tracked(json: bool) -> Result<()> {
+    let home = home();
+    let cfg_path = config_path();
+    let config = Config::load_or_default(&cfg_path)?.with_env_skips();
+
+    if config.tracks.is_empty() {
+        println!();
+        println!("  Nothing tracked yet. `kitbag add <path>` starts.");
+        println!("  `kitbag discover` says what is here that nothing keeps.");
+        return Ok(());
+    }
+
+    let mut rows: Vec<(String, String, String)> = Vec::new();
+    for track in &config.tracks {
+        let what = match (&track.path, &track.command) {
+            (Some(path), _) => path.clone(),
+            (None, Some(_)) => track
+                .name
+                .clone()
+                .unwrap_or_else(|| "(a command with no name)".into()),
+            (None, None) => "(neither a path nor a command)".into(),
+        };
+
+        let mut notes: Vec<String> = Vec::new();
+        match &track.scope {
+            Some(s) => notes.push(s.clone()),
+            None if track.command.is_some() => {}
+            None => notes.push("scope from each file's own marker".into()),
+        }
+        if let Some(owner) = &track.owner {
+            notes.push(owner.clone());
+        }
+        if track.per_machine {
+            notes.push("this machine's own".into());
+        }
+        if track.volatile {
+            notes.push("not comparable".into());
+        }
+        if !track.platform.is_empty() {
+            notes.push(track.platform.join("/"));
+        }
+        if let Some(only) = &track.only {
+            notes.push(format!("{only} only"));
+        }
+
+        let holds = match &track.path {
+            None => "a command".to_string(),
+            Some(pattern) => {
+                let expanded = kitbag_core::config::expand(pattern, &home);
+                let all = if expanded.contains('*') || expanded.contains('?') {
+                    glob_files(Path::new(&expanded))
+                } else if Path::new(&expanded).is_file() {
+                    vec![PathBuf::from(&expanded)]
+                } else {
+                    Vec::new()
+                };
+                let kept = match track.only.as_deref() {
+                    Some("scripts") => all.iter().filter(|p| is_script(p)).count(),
+                    Some(_) => 0,
+                    None => all.len(),
+                };
+                // The left-out count is the whole reason this command exists:
+                // it is the only place a filter's effect is visible.
+                match (all.len(), all.len() - kept) {
+                    (0, _) => "nothing here".to_string(),
+                    (n, 0) => format!("{n} file(s)"),
+                    (n, out) => format!("{n} file(s), {out} filtered out"),
+                }
+            }
+        };
+        rows.push((what, notes.join(" · "), holds));
+    }
+
+    if json {
+        let out: Vec<_> = rows
+            .iter()
+            .map(|(what, notes, holds)| {
+                serde_json::json!({ "track": what, "notes": notes, "holds": holds })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&out)?);
+        return Ok(());
+    }
+
+    println!();
+    println!("  from {}", cfg_path.display());
+    println!();
+    // Measured, not guessed: one keychain path under ~/Library is longer than
+    // any fixed column, and a row that overflows takes the whole table's
+    // alignment with it.
+    let first = rows
+        .iter()
+        .map(|(w, _, _)| w.chars().count())
+        .max()
+        .unwrap_or(0);
+    let second = rows
+        .iter()
+        .map(|(_, n, _)| n.chars().count())
+        .max()
+        .unwrap_or(0);
+    for (what, notes, holds) in &rows {
+        println!("    {what:<first$}  {notes:<second$}  {holds}");
+    }
+    println!();
+    println!("  {} track(s).", rows.len());
+    if !config.skip.is_empty() {
+        println!(
+            "  Kept on this machine in both directions: {}",
+            config.skip.join(", ")
+        );
+    }
+    println!("  `kitbag status` shows the items these come to.");
     Ok(())
 }
 

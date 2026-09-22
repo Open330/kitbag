@@ -139,6 +139,7 @@ kitbag apply                  make the machine match the recipes
 kitbag discover               find state nothing is tracking, and what is
                               tracked and not in the store
 kitbag add <path>...          start keeping it
+kitbag tracked                what this machine was told to keep, as it was told
 kitbag programs               write down what is installed, so it can be again
 kitbag push / restore         move it, one scope at a time
 kitbag diff                   what differs, without the values
@@ -283,6 +284,27 @@ asking — and prints, so none of it is silent:
 ```bash
 kitbag add ~/work/deploy --scope work --everywhere --why "deploy scripts"
 ```
+
+### Where it shows up
+
+Three questions, three commands, and they are not the same question:
+
+```console
+$ kitbag tracked        # what this machine was told to keep, as it was told
+
+    ~/work/deploy/*      work · scripts only                3 file(s), 1 filtered out
+    ~/notes/journal.md   scope from each file's own marker  1 file(s)
+    ~/.npmrc             personal                           nothing here
+
+$ kitbag status         # the items those come to, marked against the store
+$ kitbag catalogue      # the rules about where to look, built in and yours
+```
+
+`tracked` is the only place a filter's effect is visible. `status` shows what
+came through, and silence about the rest reads as "there was nothing else" —
+so the count of what was left out lives here. So does `nothing here`, for a
+path that is tracked and absent, which is the quietest way to believe you have
+a backup you do not.
 
 ## The catalogue is a list you can add to
 

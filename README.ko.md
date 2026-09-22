@@ -115,6 +115,7 @@ kitbag apply                  기계를 레시피대로 맞춤
 kitbag discover               추적되지 않는 상태, 그리고 추적은 되는데
                               저장소에 없는 것
 kitbag add <path>...          start keeping it
+kitbag tracked                what this machine was told to keep, as it was told
 kitbag programs               무엇이 깔려 있는지 적어둠 — 다시 깔 수 있도록
 kitbag push / restore         scope 단위로 옮김
 kitbag diff                   무엇이 다른지, 값은 빼고
@@ -256,6 +257,27 @@ $ kitbag add ~/work/deploy --scope work
 ```bash
 kitbag add ~/work/deploy --scope work --everywhere --why "deploy scripts"
 ```
+
+### 어디서 보이나요
+
+질문이 셋이고 명령도 셋입니다. 서로 다른 질문입니다:
+
+```console
+$ kitbag tracked        # 이 기계가 무엇을 지키라고 들었는지, 들은 그대로
+
+    ~/work/deploy/*      work · scripts only                3 file(s), 1 filtered out
+    ~/notes/journal.md   scope from each file's own marker  1 file(s)
+    ~/.npmrc             personal                           nothing here
+
+$ kitbag status         # 그것들이 만들어낸 항목, 스토어와 대조해서
+$ kitbag catalogue      # 어디를 볼지에 대한 규칙, 내장된 것과 당신 것
+```
+
+`tracked`는 **필터의 효과가 보이는 유일한 자리**입니다. `status`는 통과한
+것만 보여주고, 나머지에 대한 침묵은 "다른 건 없었다"로 읽힙니다 — 그래서
+몇 개가 빠졌는지는 여기 있습니다. `nothing here`도 마찬가지입니다. 추적
+중인데 파일이 없는 경우인데, **있지도 않은 백업을 있다고 믿는 가장 조용한
+경로**입니다.
 
 ## 카탈로그는 더할 수 있는 목록입니다
 

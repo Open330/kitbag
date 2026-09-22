@@ -144,6 +144,10 @@ enum Command {
         dismiss: Option<String>,
     },
 
+    /// What this machine has been told to keep, as it was told
+    #[command(visible_alias = "ls")]
+    Tracked,
+
     /// What `discover` looks for, and where to add to it
     Catalogue,
 
@@ -304,6 +308,7 @@ fn main() -> Result<()> {
         Command::Discover { write, ref dismiss } => {
             run::discover(write, dismiss.as_deref(), cli.backend.as_deref(), cli.json)?
         }
+        Command::Tracked => run::tracked(cli.json)?,
         Command::Catalogue => run::catalogue(cli.json)?,
         Command::Add {
             ref paths,
@@ -384,6 +389,7 @@ fn name_of(c: &Command) -> &'static str {
         Command::Plan => "plan",
         Command::Apply { .. } => "apply",
         Command::Discover { .. } => "discover",
+        Command::Tracked => "tracked",
         Command::Catalogue => "catalogue",
         Command::Add { .. } => "add",
         Command::Diff { .. } => "diff",

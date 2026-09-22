@@ -72,6 +72,7 @@ kitbag apply [--only pkg]     make it so
 kitbag discover               scan for personal state that is not tracked yet, and propose it
 kitbag catalogue              what discover looks for, and where to add to it
 kitbag add <path>…            start keeping it — the `git add` of this tool
+kitbag tracked                what this machine was told to keep, as it was told
 kitbag push [--only name…]    send tracked state to the store
 kitbag restore [--only name…] write it back here (asks first; -y to skip)
 kitbag diff [name…]           what differs from the store — shapes and names, never values
@@ -92,6 +93,13 @@ install software, which reaches the network, takes minutes, and no backup
 undoes. What it does not do is print a plan to confirm against: building one
 means fetching every payload to find out, which is twice the calls and every
 secret held twice as long, for a question `--dry-run` already answers.
+
+`tracked` and `status` answer different questions, and the difference is the
+point: `status` shows the items a track came to, `tracked` shows the line
+somebody wrote. It is the only place a filter's effect is visible — `status`
+shows what came through, and silence about the rest reads as "there was
+nothing else" — and the only place a tracked path with no file behind it says
+so, which is the quietest way to believe in a backup that does not exist.
 
 `add` exists because saying "keep this" should not be an edit. The config file
 is there so a machine can remember the answer, not because a person should have
