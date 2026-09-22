@@ -56,24 +56,38 @@ kitbag backup
 
 One command, from a machine that has never done this to a machine whose state
 is in a store. It asks which store, what this machine is willing to hold, and
-then — one at a time, because "take all of these" is not an answer anybody can
-give about their own home directory without looking — what it found:
+then shows everything it found at once — a decision somebody makes by reading
+down a list should be one answer, not one answer per line:
 
 ```console
-  3/4  3 thing(s) here that nothing keeps.
-       [y]es  [n]ot now  [d]ismiss for good  [a]ll  [q]uit asking
+  3/4  4 thing(s) here that nothing keeps.
 
-       ~/.ssh/id_*
-       a private key, and this machine's own · a known place
-       [y/n/d/a/q] y
+     1  ~/.aws/credentials                     AWS access keys
+        proposed as work
+     2  ~/.config/gh/hosts.yml                 a GitHub token
+        proposed as personal
+     3  ~/.envs/*                              a directory of environment files
+        needs its own `# scope:` line, or it is skipped
+     4  ~/.ssh/id_*                            a private key, and this machine's own
+        proposed as personal
+
+       [all] · `none` · numbers like `1 3 5` or `2-4`
+       `d 2` dismisses one for good, and asks again
+       > 2-4
 
   4/4  What would be sent:
 
+  + env:hf                        would be sent
   + ssh:id_ed25519@this-mac       would be sent
   + programs@this-mac             would be sent
 
   Send these? [y/N]
 ```
+
+Empty means all of it, because the list was just read and the usual answer at
+the end of reading it is yes; saying no takes a word. A number that is not in
+the list is a question, not a selection — quietly taking the ones that did
+exist is how somebody ends up believing they backed up something they did not.
 
 Nothing is sent until that last question, and the line above it is the plan.
 Every step is the command of the same name — `discover`, `track`, `push`,

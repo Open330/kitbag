@@ -33,25 +33,39 @@ kitbag backup
 ```
 
 한 번도 해본 적 없는 기계에서 상태가 스토어에 들어간 기계까지, 명령 하나로
-갑니다. 어느 스토어인지, 이 기계가 무엇을 맡을지 묻고, 그다음 찾은 것들을
-**하나씩** 묻습니다 — 자기 홈 디렉터리에 대해 "이거 전부 가져가"는 보지 않고
-할 수 있는 대답이 아니니까요:
+갑니다. 어느 스토어인지, 이 기계가 무엇을 맡을지 묻고, 찾은 것을 **한 번에
+모두** 보여줍니다 — 목록을 훑어보고 내리는 결정은 한 번의 대답이지, 줄마다
+한 번의 대답이 아닙니다:
 
 ```console
-  3/4  3 thing(s) here that nothing keeps.
-       [y]es  [n]ot now  [d]ismiss for good  [a]ll  [q]uit asking
+  3/4  4 thing(s) here that nothing keeps.
 
-       ~/.ssh/id_*
-       a private key, and this machine's own · a known place
-       [y/n/d/a/q] y
+     1  ~/.aws/credentials                     AWS access keys
+        proposed as work
+     2  ~/.config/gh/hosts.yml                 a GitHub token
+        proposed as personal
+     3  ~/.envs/*                              a directory of environment files
+        needs its own `# scope:` line, or it is skipped
+     4  ~/.ssh/id_*                            a private key, and this machine's own
+        proposed as personal
+
+       [all] · `none` · numbers like `1 3 5` or `2-4`
+       `d 2` dismisses one for good, and asks again
+       > 2-4
 
   4/4  What would be sent:
 
+  + env:hf                        would be sent
   + ssh:id_ed25519@this-mac       would be sent
   + programs@this-mac             would be sent
 
   Send these? [y/N]
 ```
+
+빈 줄은 전부를 뜻합니다. 방금 목록을 읽었고, 다 읽고 나서 나오는 보통의
+대답은 "네"니까요 — 아니라고 하려면 단어 하나를 쳐야 합니다. 목록에 없는
+번호는 선택이 아니라 질문입니다. 있는 것만 조용히 가져가는 건, 백업했다고
+잘못 믿게 되는 경로입니다.
 
 마지막 질문 전까지 아무것도 보내지 않고, 그 위의 줄이 계획입니다. 각 단계는
 같은 이름의 명령 그대로입니다 — `discover`, `track`, `push`, `resolve` —

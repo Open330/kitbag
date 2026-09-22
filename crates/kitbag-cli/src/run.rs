@@ -2151,50 +2151,56 @@ pub fn backup(
     if found.is_empty() {
         println!("  3/4  Nothing untracked that this knows to look for.");
     } else {
-        println!("  3/4  {} thing(s) here that nothing keeps.", found.len());
-        println!("       [y]es  [n]ot now  [d]ismiss for good  [a]ll  [q]uit asking");
-        let mut take: Vec<Finding> = Vec::new();
-        let mut all = false;
-        for f in &found {
-            if all {
-                take.push(f.clone());
-                continue;
+        // The whole list, then one answer. Asking item by item splits a
+        // decision a person makes by looking down a list into as many
+        // decisions as there are items, and makes them answer for the first
+        // one without knowing what the fifth is.
+        let mut left: Vec<Finding> = found.clone();
+        let take: Vec<Finding> = loop {
+            println!("  3/4  {} thing(s) here that nothing keeps.", left.len());
+            println!();
+            for (n, f) in left.iter().enumerate() {
+                println!("    {:>2}  {:<38} {}", n + 1, f.shown(&home), f.why);
+                if f.scope == "auto" {
+                    println!("        needs its own `# scope:` line, or it is skipped");
+                } else {
+                    println!("        proposed as {}", f.scope);
+                }
             }
             println!();
-            println!("       {}", f.shown(&home));
-            println!(
-                "       {} · {}",
-                f.why,
-                match f.source {
-                    Source::Catalogue => "a known place",
-                    Source::Noticed => "noticed here",
+            println!("       [all] · `none` · numbers like `1 3 5` or `2-4`");
+            println!("       `d 2` dismisses one for good, and asks again");
+            match parse_pick(&ask("       > ")?, left.len()) {
+                Picked::All => break left.clone(),
+                Picked::None => break Vec::new(),
+                Picked::Some(idx) => break idx.iter().map(|i| left[*i].clone()).collect(),
+                Picked::Dismiss(idx) => {
+                    for i in &idx {
+                        dismiss_path(&left[*i].path)?;
+                        println!("       dismissed {}", left[*i].shown(&home));
+                    }
+                    let mut keep: Vec<Finding> = Vec::new();
+                    for (n, f) in left.into_iter().enumerate() {
+                        if !idx.contains(&n) {
+                            keep.push(f);
+                        }
+                    }
+                    left = keep;
+                    println!();
+                    if left.is_empty() {
+                        break Vec::new();
+                    }
                 }
-            );
-            if f.scope == "auto" {
-                println!("       needs its own `# scope:` line, or it is skipped");
+                Picked::Unclear(why) => {
+                    println!("       {why}");
+                    println!();
+                }
             }
-            match ask("       [y/n/d/a/q] ")?.to_lowercase().as_str() {
-                "y" | "yes" => take.push(f.clone()),
-                "a" | "all" => {
-                    all = true;
-                    take.push(f.clone());
-                }
-                "d" => {
-                    dismiss_path(&f.path)?;
-                    println!("       dismissed — it will not come up again");
-                }
-                "q" => break,
-                // Anything else is "not now", including an empty line: the
-                // answer easiest to hit by accident should do nothing.
-                _ => {}
-            }
-        }
+        };
         if take.is_empty() {
-            println!();
             println!("       Nothing added.");
         } else {
             append_tracks(&cfg_path, &take, &home)?;
-            println!();
             println!("       Added {} to {}.", take.len(), cfg_path.display());
         }
     }
@@ -2253,6 +2259,81 @@ pub fn backup(
     Ok(())
 }
 
+/// What somebody typed at a numbered list.
+#[derive(Debug, PartialEq, Eq)]
+enum Picked {
+    All,
+    None,
+    Some(Vec<usize>),
+    Dismiss(Vec<usize>),
+    /// Not understood, and why. Never a silent "nothing", because at this
+    /// prompt "nothing" and "I mistyped" look identical afterwards.
+    Unclear(String),
+}
+
+/// Read a selection against a list of `count` items, as zero-based indices.
+///
+/// Empty means everything: the list was just read, and the common answer at
+/// the end of reading it is yes. Saying no takes a word, which is the right
+/// way round — nobody types `none` by accident.
+fn parse_pick(answer: &str, count: usize) -> Picked {
+    let answer = answer.trim().to_lowercase();
+    if answer.is_empty() || answer == "all" || answer == "a" {
+        return Picked::All;
+    }
+    if answer == "none" || answer == "n" {
+        return Picked::None;
+    }
+
+    let (dismissing, rest) = match answer.strip_prefix('d') {
+        Some(rest) => (true, rest.trim().to_string()),
+        None => (false, answer.clone()),
+    };
+    if dismissing && rest.is_empty() {
+        return Picked::Unclear("`d` needs a number: `d 2`, or `d 2 4`.".into());
+    }
+
+    let mut picked: Vec<usize> = Vec::new();
+    for token in rest.split(|c: char| c == ',' || c.is_whitespace()) {
+        if token.is_empty() {
+            continue;
+        }
+        // `2-4` is three answers written the way people write three answers.
+        let bounds: Vec<&str> = token.splitn(2, '-').collect();
+        let range = match bounds.as_slice() {
+            [one] => one.parse::<usize>().map(|n| (n, n)),
+            [from, to] => match (from.parse::<usize>(), to.parse::<usize>()) {
+                (Ok(a), Ok(b)) => Ok((a, b)),
+                _ => return Picked::Unclear(format!("`{token}` is not a number or a range.")),
+            },
+            _ => return Picked::Unclear(format!("`{token}` is not a number or a range.")),
+        };
+        let Ok((from, to)) = range else {
+            return Picked::Unclear(format!("`{token}` is not a number or a range."));
+        };
+        if from == 0 || to == 0 || from > count || to > count {
+            return Picked::Unclear(format!("there is no {token} — the list has {count}."));
+        }
+        if from > to {
+            return Picked::Unclear(format!("`{token}` counts backwards."));
+        }
+        for n in from..=to {
+            if !picked.contains(&(n - 1)) {
+                picked.push(n - 1);
+            }
+        }
+    }
+    if picked.is_empty() {
+        return Picked::Unclear("that picked nothing — `none` if that is what you meant.".into());
+    }
+    picked.sort_unstable();
+    if dismissing {
+        Picked::Dismiss(picked)
+    } else {
+        Picked::Some(picked)
+    }
+}
+
 /// One line from the person, with the question left on screen.
 fn ask(question: &str) -> Result<String> {
     use std::io::Write;
@@ -2277,6 +2358,48 @@ fn dismiss_path(path: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+
+    use super::{parse_pick, Picked};
+
+    #[test]
+    fn an_empty_answer_at_a_list_just_read_means_all_of_it() {
+        assert_eq!(parse_pick("", 3), Picked::All);
+        assert_eq!(parse_pick("  ", 3), Picked::All);
+        assert_eq!(parse_pick("all", 3), Picked::All);
+        // and saying no takes a word, which is the right way round
+        assert_eq!(parse_pick("none", 3), Picked::None);
+    }
+
+    #[test]
+    fn numbers_come_back_as_positions_in_the_list() {
+        assert_eq!(parse_pick("1 3", 3), Picked::Some(vec![0, 2]));
+        assert_eq!(parse_pick("1,3", 3), Picked::Some(vec![0, 2]));
+        assert_eq!(parse_pick("3 1", 3), Picked::Some(vec![0, 2]));
+        // a range is three answers written the way people write three answers
+        assert_eq!(parse_pick("2-4", 5), Picked::Some(vec![1, 2, 3]));
+        // and saying the same one twice is not two of it
+        assert_eq!(parse_pick("2 2-3", 5), Picked::Some(vec![1, 2]));
+    }
+
+    #[test]
+    fn a_number_that_is_not_in_the_list_is_a_question_not_a_selection() {
+        // Silently taking the ones that did exist is how somebody ends up
+        // believing they backed up something they did not.
+        assert!(matches!(parse_pick("1 9", 3), Picked::Unclear(_)));
+        assert!(matches!(parse_pick("0", 3), Picked::Unclear(_)));
+        assert!(matches!(parse_pick("two", 3), Picked::Unclear(_)));
+        assert!(matches!(parse_pick("3-1", 5), Picked::Unclear(_)));
+    }
+
+    #[test]
+    fn dismissing_says_which_and_never_means_all_of_them() {
+        assert_eq!(parse_pick("d 2", 3), Picked::Dismiss(vec![1]));
+        assert_eq!(parse_pick("d 1 3", 3), Picked::Dismiss(vec![0, 2]));
+        // `d` on its own would be "dismiss everything" read generously, and
+        // generous is the wrong way to read a permanent refusal.
+        assert!(matches!(parse_pick("d", 3), Picked::Unclear(_)));
+        assert!(matches!(parse_pick("d 9", 3), Picked::Unclear(_)));
+    }
 
     #[test]
     fn an_answer_is_read_generously_but_a_blank_one_does_nothing() {
