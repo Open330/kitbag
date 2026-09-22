@@ -1454,41 +1454,221 @@ pub fn discover(
 }
 
 /// Add one path by hand.
-pub fn track(path: &str, scope: Option<&str>, owner: Option<&str>) -> Result<()> {
+/// Start keeping a path. The `git add` of this tool.
+///
+/// Editing a config file to say "keep this" is a step nobody should have to
+/// take, and the reason the config exists is that a machine needs to remember
+/// the answer — not that a person should have to type it in that shape.
+///
+/// What it works out rather than asking: a directory becomes the pattern that
+/// covers the files not in it yet; a directory holding both scripts and
+/// installed binaries gets `only = "scripts"`, because storing a binary built
+/// for one architecture is the thing `programs` exists to avoid; and a file
+/// carrying its own `# scope:` marker keeps it, since the marker travels with
+/// the file and any scope written here would be a second answer to the same
+/// question.
+///
+/// Every guess is printed. None of them is silent.
+#[allow(clippy::too_many_arguments)]
+pub fn add(
+    paths: &[String],
+    scope: Option<&str>,
+    owner: Option<&str>,
+    why: Option<&str>,
+    everywhere: bool,
+    secret: bool,
+    all_files: bool,
+    per_machine: bool,
+) -> Result<()> {
     let home = home();
     let cfg_path = config_path();
-    let full = PathBuf::from(kitbag_core::config::expand(path, &home));
-
-    if !full.exists() && !path.contains('*') {
-        println!(
-            "  {} is not here. Tracking it anyway — say so if that is a typo.",
-            pretty(&full, &home)
-        );
-    }
-
-    let mut entry = format!("\n[[track]]\npath = \"{path}\"\n");
     if let Some(s) = scope {
-        // Refuse a scope this version does not know, rather than writing a
-        // config that will fail quietly on the next run.
+        // Refused here rather than written into a config that fails quietly
+        // on every run from now on.
         let _: kitbag_core::Scope = s.parse()?;
-        entry.push_str(&format!("scope = \"{s}\"\n"));
     }
-    if let Some(o) = owner {
-        entry.push_str(&format!("owner = \"{o}\"\n"));
+
+    let existing = std::fs::read_to_string(&cfg_path).unwrap_or_default();
+    let mut adding = String::new();
+    let mut rules = String::new();
+    let mut added = 0usize;
+
+    println!();
+    for given in paths {
+        let full = PathBuf::from(kitbag_core::config::expand(given, &home));
+
+        // A directory is a standing answer, not a list of today's files: the
+        // pattern covers the ones that are not there yet, which is most of
+        // the point of saying "keep this directory".
+        let (pattern, matches) = if full.is_dir() {
+            let pattern = format!("{}/*", given.trim_end_matches('/'));
+            (pattern, files_in(&full))
+        } else if given.contains('*') {
+            (given.clone(), glob_files(&full))
+        } else {
+            (given.clone(), vec![full.clone()])
+        };
+
+        if existing.contains(&format!("path = \"{pattern}\""))
+            || adding.contains(&format!("path = \"{pattern}\""))
+        {
+            println!("  = {pattern:<38} already tracked");
+            continue;
+        }
+        if matches.is_empty() && !pattern.contains('*') {
+            println!("  ! {pattern:<38} not here — tracking it anyway");
+        }
+
+        // Scripts and installed binaries share a directory more often than
+        // not, and only one of the two belongs in a store.
+        let scripts = matches.iter().filter(|p| is_script(p)).count();
+        let filter = if all_files || scripts == 0 || scripts == matches.len() {
+            None
+        } else {
+            Some("scripts")
+        };
+
+        let mut notes: Vec<String> = Vec::new();
+        let mut entry = format!("\n[[track]]\npath = \"{pattern}\"\n");
+        match scope {
+            Some(s) => {
+                entry.push_str(&format!("scope = \"{s}\"\n"));
+                notes.push(s.to_string());
+            }
+            None => {
+                let marked = matches.iter().filter(|p| carries_a_marker(p)).count();
+                if marked == matches.len() && !matches.is_empty() {
+                    notes.push("scope from each file's own marker".into());
+                } else {
+                    notes.push(format!(
+                        "{} of {} carry no `# scope:` line and will be skipped",
+                        matches.len() - marked,
+                        matches.len()
+                    ));
+                }
+            }
+        }
+        if let Some(o) = owner {
+            entry.push_str(&format!("owner = \"{o}\"\n"));
+            notes.push(o.to_string());
+        }
+        if per_machine {
+            entry.push_str("per_machine = true\n");
+            notes.push("this machine's own".into());
+        }
+        if let Some(f) = filter {
+            entry.push_str(&format!("only = \"{f}\"\n"));
+            notes.push(format!(
+                "scripts only — {} of {} here are not",
+                matches.len() - scripts,
+                matches.len()
+            ));
+        }
+        adding.push_str(&entry);
+        added += 1;
+        println!("  + {pattern:<38} {}", notes.join(" · "));
+
+        if everywhere {
+            let reason = why.unwrap_or("something you named");
+            let mut rule = format!("\n[[known]]\npath = \"{}\"\n", under_home(&pattern));
+            rule.push_str(&format!("why = \"{reason}\"\n"));
+            rule.push_str(&format!("scope = \"{}\"\n", scope.unwrap_or("personal")));
+            rule.push_str(&format!(
+                "kind = \"{}\"\n",
+                if secret { "secret" } else { "setup" }
+            ));
+            if per_machine {
+                rule.push_str("per_machine = true\n");
+            }
+            if let Some(f) = filter {
+                rule.push_str(&format!("only = \"{f}\"\n"));
+            }
+            rules.push_str(&rule);
+        }
+    }
+
+    if added == 0 {
+        println!();
+        println!("  Nothing added.");
+        return Ok(());
     }
 
     if let Some(parent) = cfg_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let mut current = std::fs::read_to_string(&cfg_path).unwrap_or_default();
-    current.push_str(&entry);
-    std::fs::write(&cfg_path, current)?;
+    std::fs::write(&cfg_path, format!("{existing}{adding}"))?;
+    println!();
+    println!("  Added to {}.", cfg_path.display());
 
-    println!("  tracking {} in {}", path, cfg_path.display());
-    if scope.is_none() {
-        println!("  no scope given, so the file must carry its own `# scope:` line.");
+    if !rules.is_empty() {
+        let rule_path = kitbag_catalog::catalogue_path(&home);
+        if let Some(parent) = rule_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let was = std::fs::read_to_string(&rule_path).unwrap_or_default();
+        std::fs::write(&rule_path, format!("{was}{rules}"))?;
+        println!(
+            "  And to {}, so every machine looks there.",
+            rule_path.display()
+        );
     }
+
+    println!("  `kitbag status` shows it; `kitbag push` sends it.");
     Ok(())
+}
+
+/// One level of a directory, files only.
+fn files_in(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| p.is_file())
+        .collect()
+}
+
+fn glob_files(pattern: &Path) -> Vec<PathBuf> {
+    match glob::glob(&pattern.to_string_lossy()) {
+        Ok(found) => found
+            .filter_map(Result::ok)
+            .filter(|p| p.is_file())
+            .collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Does this file begin `#!`? The same question the collector asks, and the
+/// only honest way to tell a script from a binary that shares its directory.
+fn is_script(path: &Path) -> bool {
+    use std::io::Read;
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut head = [0u8; 2];
+    file.read_exact(&mut head).is_ok() && &head == b"#!"
+}
+
+/// Does it say whose it is? A marker travels with the file, so a file that
+/// has one needs no scope written anywhere else.
+fn carries_a_marker(path: &Path) -> bool {
+    std::fs::read_to_string(path)
+        .map(|text| {
+            text.lines()
+                .take(20)
+                .any(|l| l.contains("scope:") && l.trim_start().starts_with(['#', '/', '-', ';']))
+        })
+        .unwrap_or(false)
+}
+
+/// A catalogue entry is relative to the home directory, because it is a rule
+/// for every machine and no two of them spell a home directory the same way.
+fn under_home(pattern: &str) -> String {
+    pattern
+        .trim_start_matches("~/")
+        .trim_start_matches("./")
+        .to_string()
 }
 
 fn append_tracks(cfg_path: &Path, found: &[Finding], home: &Path) -> Result<()> {

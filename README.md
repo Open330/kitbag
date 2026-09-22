@@ -138,7 +138,7 @@ kitbag apply                  make the machine match the recipes
                               (packages, links, defaults, downloads, clones, merges)
 kitbag discover               find state nothing is tracking, and what is
                               tracked and not in the store
-kitbag track <path> --scope work
+kitbag add <path>...          start keeping it
 kitbag programs               write down what is installed, so it can be again
 kitbag push / restore         move it, one scope at a time
 kitbag diff                   what differs, without the values
@@ -252,6 +252,37 @@ duplication, and going quiet about it reads as a bug:
 Asked of every file a pattern matches, not of the first one: a directory where
 one script is a link into a repository and the next is not is the ordinary
 case.
+
+## Keeping something is one command
+
+```console
+$ kitbag add ~/work/deploy --scope work
+
+  + ~/work/deploy/*                        work · scripts only — 2 of 4 here are not
+
+  Added to ~/.config/kitbag/machine.toml.
+  `kitbag status` shows it; `kitbag push` sends it.
+```
+
+The config file exists so a machine can remember the answer, not because
+anybody should have to type it in that shape. What `add` works out rather than
+asking — and prints, so none of it is silent:
+
+- **A directory becomes a pattern.** `~/work/deploy` is a standing answer, not
+  a list of today's files, so it is written `~/work/deploy/*` and covers what
+  is not there yet.
+- **A directory of scripts *and* installed binaries takes the scripts.** That
+  is the `only = "scripts"` rule, applied where it applies. `--all` overrides it.
+- **A file carrying its own `# scope:` marker gets no second answer.** The
+  marker travels with the file; a scope in the config as well is another answer
+  to the same question, and the two can disagree.
+- **Adding the same thing twice adds it once.**
+
+`--everywhere` writes the catalogue rule as well, so every machine looks there:
+
+```bash
+kitbag add ~/work/deploy --scope work --everywhere --why "deploy scripts"
+```
 
 ## The catalogue is a list you can add to
 

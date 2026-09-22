@@ -147,15 +147,41 @@ enum Command {
     /// What `discover` looks for, and where to add to it
     Catalogue,
 
-    /// Start tracking a path
-    Track {
-        path: String,
-        /// Whose it is; omit if the file carries its own `# scope:` marker
-        #[arg(long)]
+    /// Start keeping a path — the `git add` of this tool
+    #[command(visible_alias = "track")]
+    Add {
+        /// Files, directories or patterns. A directory covers what is not in
+        /// it yet.
+        #[arg(value_name = "PATH", required = true)]
+        paths: Vec<String>,
+
+        /// Whose it is; omit if the files carry their own `# scope:` marker
+        #[arg(long, short)]
         scope: Option<String>,
+
         /// Free text, kept beside the item
         #[arg(long)]
         owner: Option<String>,
+
+        /// Look here on every machine, not only this one
+        #[arg(long)]
+        everywhere: bool,
+
+        /// With --everywhere: what it is, in a few words
+        #[arg(long, value_name = "TEXT")]
+        why: Option<String>,
+
+        /// With --everywhere: file it under credentials rather than setup
+        #[arg(long)]
+        secret: bool,
+
+        /// Take every file, including ones that are not scripts
+        #[arg(long)]
+        all: bool,
+
+        /// This belongs to this machine, not to its owner
+        #[arg(long)]
+        per_machine: bool,
     },
 
     /// What differs between this machine and the store, without the values
@@ -279,11 +305,25 @@ fn main() -> Result<()> {
             run::discover(write, dismiss.as_deref(), cli.backend.as_deref(), cli.json)?
         }
         Command::Catalogue => run::catalogue(cli.json)?,
-        Command::Track {
-            ref path,
+        Command::Add {
+            ref paths,
             ref scope,
             ref owner,
-        } => run::track(path, scope.as_deref(), owner.as_deref())?,
+            everywhere,
+            ref why,
+            secret,
+            all,
+            per_machine,
+        } => run::add(
+            paths,
+            scope.as_deref(),
+            owner.as_deref(),
+            why.as_deref(),
+            everywhere,
+            secret,
+            all,
+            per_machine,
+        )?,
         Command::Doctor => check::doctor(cli.backend.as_deref(), cli.json)?,
         Command::Trust { ref what } => match what {
             TrustCmd::List { hosts } => trust::list(hosts)?,
@@ -345,7 +385,7 @@ fn name_of(c: &Command) -> &'static str {
         Command::Apply { .. } => "apply",
         Command::Discover { .. } => "discover",
         Command::Catalogue => "catalogue",
-        Command::Track { .. } => "track",
+        Command::Add { .. } => "add",
         Command::Diff { .. } => "diff",
         Command::Resolve => "resolve",
         Command::Programs { .. } => "programs",

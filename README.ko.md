@@ -114,7 +114,7 @@ kitbag apply                  기계를 레시피대로 맞춤
                               (패키지·링크·defaults·다운로드·클론·병합)
 kitbag discover               추적되지 않는 상태, 그리고 추적은 되는데
                               저장소에 없는 것
-kitbag track <path> --scope work
+kitbag add <path>...          start keeping it
 kitbag programs               무엇이 깔려 있는지 적어둠 — 다시 깔 수 있도록
 kitbag push / restore         scope 단위로 옮김
 kitbag diff                   무엇이 다른지, 값은 빼고
@@ -225,6 +225,37 @@ settings 저장소는 `~/.zshrc`를 자기 안으로 심볼릭 링크합니다. 
 
 패턴이 매칭한 **모든** 파일에 대해 묻습니다. 첫 번째 하나가 아니라요 — 한
 스크립트는 저장소 링크이고 다음 것은 아닌 디렉터리가 보통의 경우니까요.
+
+## 뭔가를 지키는 건 명령 하나입니다
+
+```console
+$ kitbag add ~/work/deploy --scope work
+
+  + ~/work/deploy/*                        work · scripts only — 2 of 4 here are not
+
+  Added to ~/.config/kitbag/machine.toml.
+  `kitbag status` shows it; `kitbag push` sends it.
+```
+
+설정 파일이 있는 이유는 **기계가 답을 기억해야 해서**지, 사람이 그 모양으로
+타이핑해야 해서가 아닙니다. `add`가 묻지 않고 알아서 정하는 것들 — 그리고
+전부 출력합니다, 조용한 건 하나도 없습니다:
+
+- **디렉터리는 패턴이 됩니다.** `~/work/deploy`는 오늘의 파일 목록이 아니라
+  계속 유효한 답이므로 `~/work/deploy/*`로 쓰이고, 아직 없는 파일까지 덮습니다.
+- **스크립트와 설치된 바이너리가 섞인 디렉터리는 스크립트만 가져갑니다.**
+  `only = "scripts"` 규칙이 적용될 자리에 적용된 겁니다. `--all`로 덮어쓸 수
+  있습니다.
+- **자기 `# scope:` 마커가 있는 파일에는 두 번째 답을 쓰지 않습니다.** 마커는
+  파일과 함께 이동합니다. 설정에도 scope를 쓰면 같은 질문에 대한 답이 둘이
+  되고, 둘은 어긋날 수 있습니다.
+- **같은 걸 두 번 추가해도 한 번만 들어갑니다.**
+
+`--everywhere`를 붙이면 카탈로그 규칙까지 써서, 모든 기계가 거기를 봅니다:
+
+```bash
+kitbag add ~/work/deploy --scope work --everywhere --why "deploy scripts"
+```
 
 ## 카탈로그는 더할 수 있는 목록입니다
 

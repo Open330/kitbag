@@ -71,7 +71,7 @@ kitbag plan                   what apply would change
 kitbag apply [--only pkg]     make it so
 kitbag discover               scan for personal state that is not tracked yet, and propose it
 kitbag catalogue              what discover looks for, and where to add to it
-kitbag track <path> --scope work [--owner acme]
+kitbag add <path>…            start keeping it — the `git add` of this tool
 kitbag push [--only name…]    send tracked state to the store
 kitbag restore [--only name…] write it back here (asks first; -y to skip)
 kitbag diff [name…]           what differs from the store — shapes and names, never values
@@ -92,6 +92,14 @@ install software, which reaches the network, takes minutes, and no backup
 undoes. What it does not do is print a plan to confirm against: building one
 means fetching every payload to find out, which is twice the calls and every
 secret held twice as long, for a question `--dry-run` already answers.
+
+`add` exists because saying "keep this" should not be an edit. The config file
+is there so a machine can remember the answer, not because a person should have
+to type it in that shape. What it works out rather than asking — and prints, so
+none of it is silent: a directory becomes the pattern that covers the files not
+in it yet; a directory holding both scripts and installed binaries gets
+`only = "scripts"`; and a file carrying its own `# scope:` marker gets no second
+answer written beside it. `--everywhere` writes the catalogue rule too.
 
 `backup` is the others in an order: `discover`, `track`, `push` and, if
 anything was held, `resolve`. It exists because needing four commands in the

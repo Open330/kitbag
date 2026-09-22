@@ -20,6 +20,7 @@ serde_json.workspace = true
 kitbag-core = { path = "../kitbag-core" }
 kitbag-providers = { path = "../kitbag-providers" }
 kitbag-vault = { path = "../kitbag-vault" }
+glob = "0.3"
 
 [dev-dependencies]
 tempfile = "3"
