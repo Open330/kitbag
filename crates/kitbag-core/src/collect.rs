@@ -109,6 +109,11 @@ pub enum Reason {
     /// The command ran and said nothing, which is not state worth keeping.
     Empty,
     Unreadable(String),
+    /// The track asked for scripts and this is not one.
+    NotAScript,
+    /// The track named a filter this version does not know. Taking everything
+    /// instead would quietly send what somebody asked to have filtered out.
+    UnknownFilter(String),
 }
 
 impl Reason {
@@ -121,6 +126,10 @@ impl Reason {
             Reason::Unnamed => "a command-sourced item needs a name".into(),
             Reason::Empty => "the command produced nothing".into(),
             Reason::Unreadable(e) => format!("could not be read: {e}"),
+            Reason::NotAScript => "not a script, and this track asked for scripts".into(),
+            Reason::UnknownFilter(f) => {
+                format!("`only = \"{f}\"` is not a filter this version knows")
+            }
         }
     }
 }
@@ -152,6 +161,22 @@ pub fn collect(config: &Config, home: &Path) -> Collected {
     }
     out.items.sort_by(|a, b| a.name.cmp(&b.name));
     out
+}
+
+/// Does this file begin `#!`?
+///
+/// The whole question, deliberately. A `bin` directory is a mix of what
+/// somebody wrote and what a package manager installed, and the shebang is
+/// what separates them — cheaper and more honest than guessing from the
+/// extension, which most scripts do not have, or from the executable bit,
+/// which every installed binary also has.
+fn is_script(path: &Path) -> bool {
+    use std::io::Read;
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut head = [0u8; 2];
+    file.read_exact(&mut head).is_ok() && &head == b"#!"
 }
 
 fn collect_track(track: &Track, home: &Path, out: &mut Collected) {
@@ -190,6 +215,30 @@ fn collect_track(track: &Track, home: &Path, out: &mut Collected) {
                 });
             }
             continue;
+        }
+        match track.only.as_deref() {
+            None => {}
+            Some("scripts") => {
+                if !is_script(&path) {
+                    // Only worth saying for a file somebody named directly. A
+                    // `bin` directory full of installed binaries would
+                    // otherwise report every one of them on every run.
+                    if !expanded.contains('*') {
+                        out.skipped.push(Skipped {
+                            path,
+                            reason: Reason::NotAScript,
+                        });
+                    }
+                    continue;
+                }
+            }
+            Some(other) => {
+                out.skipped.push(Skipped {
+                    path,
+                    reason: Reason::UnknownFilter(other.to_string()),
+                });
+                continue;
+            }
         }
         match read_item(&path, track, home) {
             Ok(item) => out.items.push(item),
@@ -625,5 +674,75 @@ mod tests {
             "{}",
             got.items[0].detail()
         );
+    }
+}
+
+#[cfg(test)]
+mod scripts_filter_tests {
+    use super::*;
+    use crate::config::Config;
+
+    fn home_with_a_bin() -> tempfile::TempDir {
+        let home = tempfile::tempdir().expect("a home");
+        std::fs::create_dir_all(home.path().join("bin")).unwrap();
+        std::fs::write(
+            home.path().join("bin/deploy"),
+            "#!/bin/sh\n# scope: personal\necho deploying\n",
+        )
+        .unwrap();
+        // What a package manager left there: not text, not ours to carry, and
+        // built for one architecture besides.
+        std::fs::write(
+            home.path().join("bin/ripgrep"),
+            b"\x7fELF\x02\x01\x01\0\0\0",
+        )
+        .unwrap();
+        home
+    }
+
+    #[test]
+    fn a_scripts_track_takes_the_script_and_leaves_the_binary() {
+        let home = home_with_a_bin();
+        let config: Config = toml::from_str(
+            "scopes = [\"personal\"]\n\n\
+             [[track]]\npath = \"~/bin/*\"\nscope = \"personal\"\nonly = \"scripts\"\n",
+        )
+        .expect("the config parses");
+        let out = collect(&config, home.path());
+        let names: Vec<&str> = out.items.iter().map(|i| i.name.as_str()).collect();
+        assert_eq!(names, vec!["file:bin-deploy"], "{:#?}", out.items);
+        // And it is not reported as a problem: a bin directory full of
+        // installed binaries would otherwise complain about every one of them
+        // on every run.
+        assert!(out.skipped.is_empty(), "{:#?}", out.skipped);
+    }
+
+    #[test]
+    fn without_the_filter_the_same_track_takes_both() {
+        // Proof the filter is what does it, rather than something else here.
+        let home = home_with_a_bin();
+        let config: Config = toml::from_str(
+            "scopes = [\"personal\"]\n\n\
+             [[track]]\npath = \"~/bin/*\"\nscope = \"personal\"\n",
+        )
+        .expect("the config parses");
+        let out = collect(&config, home.path());
+        assert_eq!(out.items.len(), 2, "{:#?}", out.items);
+    }
+
+    #[test]
+    fn a_filter_this_version_does_not_know_takes_nothing_and_says_so() {
+        // Taking everything instead would quietly send what somebody asked to
+        // have filtered out — which is the one outcome a filter must not have.
+        let home = home_with_a_bin();
+        let config: Config = toml::from_str(
+            "scopes = [\"personal\"]\n\n\
+             [[track]]\npath = \"~/bin/*\"\nscope = \"personal\"\nonly = \"binaries\"\n",
+        )
+        .expect("the config parses");
+        let out = collect(&config, home.path());
+        assert!(out.items.is_empty(), "{:#?}", out.items);
+        assert_eq!(out.skipped.len(), 2);
+        assert!(out.skipped[0].reason.says().contains("not a filter"));
     }
 }

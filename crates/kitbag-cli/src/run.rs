@@ -1326,7 +1326,8 @@ pub fn discover(
     let Collected { items, .. } = collect(&config, &home);
     let tracked: Vec<PathBuf> = items.iter().map(|i| i.path.clone()).collect();
 
-    let found = scan(&home, &tracked, &dismissed());
+    let scanned = scan(&home, &tracked, &dismissed());
+    let found = scanned.found;
 
     // Tracked is not the same as kept. An item named in this machine's config
     // and never sent is a file somebody believes is backed up, and asking the
@@ -1393,10 +1394,22 @@ pub fn discover(
         println!("  kitbag push --backend <name> sends them.");
     }
 
+    if !scanned.in_git.is_empty() {
+        println!();
+        println!(
+            "  {} already kept by a git repository, so not proposed:",
+            scanned.in_git.len()
+        );
+        for (path, repo) in &scanned.in_git {
+            println!("    {:<38} {}", pretty(path, &home), pretty(repo, &home));
+        }
+        println!("  Whatever keeps that repository keeps these.");
+    }
+
     if found.is_empty() {
         println!();
         println!(
-            "  Nothing new. Everything this knows to look for is either tracked or dismissed."
+            "  Nothing new. Everything this knows to look for is either tracked, dismissed, or in a repository."
         );
         return Ok(());
     }
@@ -2145,7 +2158,23 @@ pub fn backup(
     let config = Config::load_or_default(&cfg_path)?.with_env_skips();
     let Collected { items, .. } = collect(&config, &home);
     let tracked: Vec<PathBuf> = items.iter().map(|i| i.path.clone()).collect();
-    let found = scan(&home, &tracked, &dismissed());
+    let scanned = scan(&home, &tracked, &dismissed());
+    let found = scanned.found;
+
+    if !scanned.in_git.is_empty() {
+        println!();
+        println!(
+            "       {} already kept by a git repository, so not offered:",
+            scanned.in_git.len()
+        );
+        for (path, repo) in &scanned.in_git {
+            println!(
+                "         {:<38} {}",
+                pretty(path, &home),
+                pretty(repo, &home)
+            );
+        }
+    }
 
     println!();
     if found.is_empty() {
@@ -2155,16 +2184,40 @@ pub fn backup(
         // decision a person makes by looking down a list into as many
         // decisions as there are items, and makes them answer for the first
         // one without knowing what the fifth is.
+        // Ordered the way it is about to be printed, so the numbers run down
+        // the page instead of jumping between groups. The number is what
+        // somebody types; it has to be where their eye already is.
         let mut left: Vec<Finding> = found.clone();
+        left.sort_by(|a, b| {
+            let rank = |k: kitbag_catalog::Kind| match k {
+                kitbag_catalog::Kind::Secret => 0,
+                kitbag_catalog::Kind::Setup => 1,
+            };
+            rank(a.kind)
+                .cmp(&rank(b.kind))
+                .then_with(|| a.shown(&home).cmp(&b.shown(&home)))
+        });
         let take: Vec<Finding> = loop {
             println!("  3/4  {} thing(s) here that nothing keeps.", left.len());
-            println!();
-            for (n, f) in left.iter().enumerate() {
-                println!("    {:>2}  {:<38} {}", n + 1, f.shown(&home), f.why);
-                if f.scope == "auto" {
-                    println!("        needs its own `# scope:` line, or it is skipped");
-                } else {
-                    println!("        proposed as {}", f.scope);
+            // Grouped, because forty lines of paths is a list somebody scrolls
+            // past and two short lists are two they read. Numbered across both,
+            // since the number is what they type.
+            for kind in [kitbag_catalog::Kind::Secret, kitbag_catalog::Kind::Setup] {
+                if !left.iter().any(|f| f.kind == kind) {
+                    continue;
+                }
+                println!();
+                println!("  {}", kind.heading());
+                for (n, f) in left.iter().enumerate() {
+                    if f.kind != kind {
+                        continue;
+                    }
+                    println!("    {:>2}  {:<38} {}", n + 1, f.shown(&home), f.why);
+                    if f.scope == "auto" {
+                        println!("        needs its own `# scope:` line, or it is skipped");
+                    } else {
+                        println!("        proposed as {}", f.scope);
+                    }
                 }
             }
             println!();

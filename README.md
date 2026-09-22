@@ -203,6 +203,56 @@ in either direction. Not for one that simply belongs to it: refusing to
 exchange a key is refusing to back it up, and a key that exists in one place
 is gone with the machine it is on.
 
+## Not only secrets
+
+A machine that came back with every credential intact and no shell profile is
+a machine somebody still has to spend an evening on. `discover` and `backup`
+look for both, and say which is which:
+
+```console
+  credentials and keys
+     1  ~/.aws/credentials                     AWS access keys
+     2  ~/.ssh/id_*                            a private key, and this machine's own
+
+  setup — configuration and scripts
+     3  ~/.config/nvim/*                       your editor's own configuration
+     4  ~/.local/bin/*                         scripts you wrote (installed binaries are left out)
+     5  ~/.zshrc                               your shell, as you set it up
+```
+
+**A `bin` directory holds two different things.** What somebody wrote, and what
+a package manager installed. Only the first belongs in a store: the second is a
+binary built for one architecture, which is exactly what the `programs` list
+exists to carry as a name instead. `only = "scripts"` takes the files that
+begin `#!` and leaves the rest — cheaper and more honest than guessing from an
+extension most scripts do not have, or from the executable bit every installed
+binary also has.
+
+```toml
+[[track]]
+path = "~/.local/bin/*"
+scope = "personal"
+only = "scripts"
+```
+
+A filter this version does not know takes **nothing** and says so. Taking
+everything instead would quietly send what somebody asked to have filtered out.
+
+**And whatever a git repository already holds is named, not proposed.** A
+settings repository symlinks `~/.zshrc` into itself; a second keeper for it is
+duplication, and going quiet about it reads as a bug:
+
+```console
+  14 already kept by a git repository, so not proposed:
+    ~/.zshrc                               ~/workspace/settings
+    ~/.local/bin/mkln                      ~/workspace/settings
+  Whatever keeps that repository keeps these.
+```
+
+Asked of every file a pattern matches, not of the first one: a directory where
+one script is a link into a repository and the next is not is the ordinary
+case.
+
 ## Programs, as a list
 
 A store should never hold a binary. It is large, it is built for one

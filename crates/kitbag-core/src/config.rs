@@ -158,6 +158,18 @@ pub struct Track {
     /// says whose it is: `ssh:id_ed25519@jiun-mbp`.
     #[serde(default)]
     pub per_machine: bool,
+    /// Which of the files a pattern matches are worth keeping.
+    ///
+    /// `scripts` takes the ones that begin `#!` and leaves the rest. A `bin`
+    /// directory holds two different things — what somebody wrote, and what a
+    /// package manager put there — and only the first belongs in a store.
+    /// Sending the second means storing a binary built for one architecture,
+    /// which is what the `programs` list exists to avoid doing.
+    ///
+    /// An unknown value is an error rather than "take everything": a filter
+    /// nobody reads is worse than no filter, because it looks like one.
+    #[serde(default)]
+    pub only: Option<String>,
     /// Set when the export is not byte-stable: tokens that rotate on their own,
     /// a timestamp baked into the format. Comparing such an item against the
     /// store answers "different" every time and means nothing by it, so kitbag

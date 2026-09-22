@@ -316,6 +316,26 @@ things that keep state in `Application Support`.
 Heuristics: files under `$HOME` with mode 600 that parse as `key = value` and
 carry a high-entropy value; dotfiles modified recently that git does not track.
 
+**The catalogue covers two kinds of thing, and says which.** Credentials, and
+*setup* — shell profiles, editor configuration, and the scripts in `~/bin` and
+`~/.local/bin`. A machine restored with every secret intact and no shell
+profile is one somebody still has to spend an evening on, and the part a
+settings repository usually carries in git is exactly the part that was
+missing.
+
+Two rules make that safe rather than merely broad:
+
+- **A `bin` directory holds what somebody wrote and what a package manager
+  installed.** `only = "scripts"` takes the files beginning `#!`. The rest are
+  binaries built for one architecture — what the `programs` list carries as a
+  name instead. An `only` this version does not recognise takes nothing and
+  says so, because a filter that silently degrades to "everything" sends what
+  somebody asked to have filtered out.
+- **A file a git repository already holds is named, not proposed.** A settings
+  repository symlinks `~/.zshrc` into itself. Asked of every file a pattern
+  matches rather than the first, since a directory mixing linked and unlinked
+  scripts is the ordinary case.
+
 Each finding comes with a proposed scope and the reason for it, and is accepted
 or dismissed interactively. Dismissals are remembered, so the second run is
 quiet.

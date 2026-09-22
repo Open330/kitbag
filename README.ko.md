@@ -178,6 +178,54 @@ per_machine = true          # ssh:id_ed25519@<host>
 건 그 키를 백업하지 않겠다는 뜻이고, 한 곳에만 있는 키는 그 기계와 함께
 사라집니다.
 
+## 비밀만이 아닙니다
+
+자격증명은 하나도 안 빠졌는데 셸 설정이 없는 기계는, 여전히 저녁 한 번을
+써야 하는 기계입니다. `discover`와 `backup`은 둘 다 찾고, 어느 쪽인지
+말해줍니다:
+
+```console
+  credentials and keys
+     1  ~/.aws/credentials                     AWS access keys
+     2  ~/.ssh/id_*                            a private key, and this machine's own
+
+  setup — configuration and scripts
+     3  ~/.config/nvim/*                       your editor's own configuration
+     4  ~/.local/bin/*                         scripts you wrote (installed binaries are left out)
+     5  ~/.zshrc                               your shell, as you set it up
+```
+
+**`bin` 디렉터리에는 두 가지가 섞여 있습니다.** 직접 쓴 것과 패키지 관리자가
+설치한 것. 저장소에 들어갈 값어치가 있는 건 앞쪽뿐입니다. 뒤쪽은 한
+아키텍처용으로 빌드된 바이너리이고, 그건 `programs` 목록이 **이름으로**
+들고 있으려고 존재하는 바로 그것입니다. `only = "scripts"`는 `#!`로 시작하는
+파일만 가져갑니다 — 대부분의 스크립트에 없는 확장자로 추측하거나, 설치된
+바이너리에도 똑같이 붙어 있는 실행 비트로 추측하는 것보다 싸고 정직합니다.
+
+```toml
+[[track]]
+path = "~/.local/bin/*"
+scope = "personal"
+only = "scripts"
+```
+
+이 버전이 모르는 필터는 **아무것도 가져가지 않고** 그렇다고 말합니다. 대신
+전부 가져가면, 걸러달라고 한 것을 조용히 보내게 됩니다.
+
+**그리고 git 저장소가 이미 들고 있는 것은 제안하지 않고 이름만 댑니다.**
+settings 저장소는 `~/.zshrc`를 자기 안으로 심볼릭 링크합니다. 거기에 두 번째
+보관자를 두는 건 중복이고, 아무 말 없이 빼면 버그처럼 보입니다:
+
+```console
+  14 already kept by a git repository, so not proposed:
+    ~/.zshrc                               ~/workspace/settings
+    ~/.local/bin/mkln                      ~/workspace/settings
+  Whatever keeps that repository keeps these.
+```
+
+패턴이 매칭한 **모든** 파일에 대해 묻습니다. 첫 번째 하나가 아니라요 — 한
+스크립트는 저장소 링크이고 다음 것은 아닌 디렉터리가 보통의 경우니까요.
+
 ## 프로그램은 목록으로
 
 저장소가 절대 담지 말아야 할 것이 바이너리입니다. 크고, 한 아키텍처용으로
