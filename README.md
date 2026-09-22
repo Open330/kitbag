@@ -300,11 +300,14 @@ $ kitbag status         # the items those come to, marked against the store
 $ kitbag catalogue      # the rules about where to look, built in and yours
 ```
 
-`tracked` is the only place a filter's effect is visible. `status` shows what
-came through, and silence about the rest reads as "there was nothing else" —
-so the count of what was left out lives here. So does `nothing here`, for a
-path that is tracked and absent, which is the quietest way to believe you have
-a backup you do not.
+The split is narrower than it looks. `status` is the one to reach for: it
+already names a tracked path with no file behind it, and it counts what a
+filter left out. `tracked` is the config read back as it was written — one
+line per track rather than per file, which is the difference between three
+lines and thirty-five on a machine with `~/.envs/*.env` in it.
+
+`catalogue` is the one that is genuinely a different question: it is about
+where to look for what you do **not** keep yet.
 
 ## The catalogue is a list you can add to
 

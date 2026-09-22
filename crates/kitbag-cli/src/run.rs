@@ -52,7 +52,11 @@ pub fn status(
     let wanted = wanted.unwrap_or_else(|| config.wanted());
     let ledger = kitbag_core::ledger::Ledger::load(&ledger_path());
 
-    let Collected { items, skipped } = collect(&config, &home);
+    let Collected {
+        items,
+        skipped,
+        filtered,
+    } = collect(&config, &home);
 
     // No store named means the local side only: a machine can be looked at
     // before it has anywhere to send things.
@@ -150,6 +154,17 @@ pub fn status(
         for s in &skipped {
             println!("  · {}  — {}", pretty(&s.path, &home), s.reason.says());
         }
+    }
+
+    // One line, not a list: a `bin` directory of installed binaries would put
+    // forty here. But zero lines is worse — a filter whose effect cannot be
+    // seen is one nobody can correct, and the files it drops look exactly
+    // like files that were never there.
+    if filtered > 0 {
+        println!();
+        println!(
+            "  {filtered} file(s) left out by a track's filter — `kitbag tracked` says which track"
+        );
     }
 
     if held_back > 0 {
@@ -448,7 +463,7 @@ pub fn push(
     let home = home();
     let config = Config::load_or_default(&config_path())?.with_env_skips();
     let wanted = wanted.unwrap_or_else(|| config.wanted());
-    let Collected { items, skipped } = collect(&config, &home);
+    let Collected { items, skipped, .. } = collect(&config, &home);
 
     let mut ledger = kitbag_core::ledger::Ledger::load(&ledger_path());
 

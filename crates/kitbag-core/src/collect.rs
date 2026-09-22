@@ -138,6 +138,14 @@ impl Reason {
 pub struct Collected {
     pub items: Vec<Item>,
     pub skipped: Vec<Skipped>,
+    /// How many files a track's `only` filter left behind.
+    ///
+    /// A count and not a list: a `bin` directory of installed binaries would
+    /// otherwise put forty lines in a report about the one thing nobody needs
+    /// to act on. But zero lines is worse than one — a filter whose effect is
+    /// invisible is a filter nobody can correct — so the number is carried
+    /// and the report says it once.
+    pub filtered: usize,
 }
 
 /// Everything the config points at, under `home`.
@@ -220,10 +228,14 @@ fn collect_track(track: &Track, home: &Path, out: &mut Collected) {
             None => {}
             Some("scripts") => {
                 if !is_script(&path) {
-                    // Only worth saying for a file somebody named directly. A
-                    // `bin` directory full of installed binaries would
-                    // otherwise report every one of them on every run.
-                    if !expanded.contains('*') {
+                    // Named directly, it is worth a line of its own: somebody
+                    // asked for that file by name and did not get it. Matched
+                    // by a pattern, it is worth a number — a `bin` directory
+                    // full of installed binaries would otherwise report every
+                    // one of them on every run.
+                    if expanded.contains('*') {
+                        out.filtered += 1;
+                    } else {
                         out.skipped.push(Skipped {
                             path,
                             reason: Reason::NotAScript,

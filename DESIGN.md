@@ -94,12 +94,17 @@ undoes. What it does not do is print a plan to confirm against: building one
 means fetching every payload to find out, which is twice the calls and every
 secret held twice as long, for a question `--dry-run` already answers.
 
-`tracked` and `status` answer different questions, and the difference is the
-point: `status` shows the items a track came to, `tracked` shows the line
-somebody wrote. It is the only place a filter's effect is visible — `status`
-shows what came through, and silence about the rest reads as "there was
-nothing else" — and the only place a tracked path with no file behind it says
-so, which is the quietest way to believe in a backup that does not exist.
+`status` and `tracked` are two views of one thing, and only one of them is
+load-bearing. `status` is where a machine's state is reported, including a
+tracked path with no file behind it and the number of files a filter left out
+— both of which belong there, because that is where people look. `tracked` is
+the config read back as written: one line per track rather than per file,
+which on a machine with `~/.envs/*.env` in it is three lines against
+thirty-five.
+
+`catalogue` is the one that is genuinely separate. It is not about what this
+machine keeps at all — it is the rules for finding what it does not keep yet,
+and it is input to `discover` rather than a report.
 
 `add` exists because saying "keep this" should not be an edit. The config file
 is there so a machine can remember the answer, not because a person should have

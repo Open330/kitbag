@@ -203,3 +203,29 @@ fn a_machine_that_keeps_nothing_says_where_to_start() {
     assert!(listed.contains("Nothing tracked yet"), "{listed}");
     assert!(listed.contains("kitbag add"), "{listed}");
 }
+
+#[test]
+fn status_counts_what_a_filter_left_out() {
+    // Where people already look. A filter whose effect is invisible is one
+    // nobody can correct, and the files it drops look exactly like files that
+    // were never there.
+    let home = home_with_a_mixed_directory();
+    kitbag(home.path(), &["add", "~/work/deploy", "--scope", "work"]);
+    let out = kitbag(home.path(), &["status", "--scope", "all"]);
+    assert!(out.contains("left out by a track's filter"), "{out}");
+    assert!(out.contains("2 file(s)"), "{out}");
+}
+
+#[test]
+fn status_already_names_a_tracked_path_with_nothing_behind_it() {
+    // Guards the claim `tracked` was once wrongly credited with: this is
+    // status's job and status was already doing it.
+    let home = tempfile::tempdir().expect("a home");
+    std::fs::write(
+        home.path().join("machine.toml"),
+        "scopes = [\"personal\"]\n\n[[track]]\npath = \"~/.npmrc\"\nscope = \"personal\"\n",
+    )
+    .unwrap();
+    let out = kitbag(home.path(), &["status"]);
+    assert!(out.contains("not on this machine"), "{out}");
+}
