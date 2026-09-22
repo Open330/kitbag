@@ -226,6 +226,46 @@ settings 저장소는 `~/.zshrc`를 자기 안으로 심볼릭 링크합니다. 
 패턴이 매칭한 **모든** 파일에 대해 묻습니다. 첫 번째 하나가 아니라요 — 한
 스크립트는 저장소 링크이고 다음 것은 아닌 디렉터리가 보통의 경우니까요.
 
+## 카탈로그는 더할 수 있는 목록입니다
+
+`kitbag catalogue`가 `discover`가 무엇을 찾는지, 어디에 더하면 되는지
+말해줍니다.
+
+내장 목록은 **대부분의 기계에서 같은 자리들**입니다. 당신이 일을 어디에
+두는지는 아무도 모르니, 목록은 열려 있어야 합니다:
+
+```toml
+# ~/.config/kitbag/catalogue.toml
+
+[[known]]
+path = "work/deploy/*"          # 홈 기준
+why  = "deploy scripts"
+scope = "work"                  # 기본값 personal
+kind  = "setup"                 # 또는 "secret"; 기본값 setup
+only  = "scripts"               # 선택: `#!`로 시작하는 파일만
+```
+
+내장 목록에 이미 있는 경로는 **그 항목을 대체합니다.** 두 번째로 추가되는 게
+아니라요. "이 기계에선 AWS가 personal이다"라고 말하는 데 Rust 상수와 다툴
+필요가 없어야 하니까요:
+
+```console
+$ kitbag catalogue
+  credentials and keys · yours
+    ~/.aws/credentials                     personal               my own AWS keys
+
+  setup — configuration and scripts · yours
+    ~/work/deploy/*                        work, only scripts     deploy scripts
+
+  34 place(s) looked for.
+```
+
+일부러 거부하는 게 둘 있습니다. 파싱이 안 되는 파일은 **보고하고**, 내장
+목록은 그대로 씁니다 — 카탈로그가 조용히 아무것도 안 하면, 지켜보고 있다고
+잘못 믿는 경로가 생깁니다. 그리고 오타 난 키는 넘어가지 않고 에러입니다.
+`scopes`는 `scope`가 아니고, 그걸 무시하면 눈앞에 쓰인 것과 다르게 동작하는
+규칙이 남습니다.
+
 ## 프로그램은 목록으로
 
 저장소가 절대 담지 말아야 할 것이 바이너리입니다. 크고, 한 아키텍처용으로

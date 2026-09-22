@@ -70,6 +70,7 @@ kitbag status                 what this machine has, grouped by scope, marked ag
 kitbag plan                   what apply would change
 kitbag apply [--only pkg]     make it so
 kitbag discover               scan for personal state that is not tracked yet, and propose it
+kitbag catalogue              what discover looks for, and where to add to it
 kitbag track <path> --scope work [--owner acme]
 kitbag push [--only name…]    send tracked state to the store
 kitbag restore [--only name…] write it back here (asks first; -y to skip)
@@ -335,6 +336,14 @@ Two rules make that safe rather than merely broad:
   repository symlinks `~/.zshrc` into itself. Asked of every file a pattern
   matches rather than the first, since a directory mixing linked and unlinked
   scripts is the ordinary case.
+
+**And the list is open.** `~/.config/kitbag/catalogue.toml` adds entries in the
+same shape, and one naming a path the built-in list already has replaces it —
+correcting a guess should not mean arguing with a constant somebody else
+compiled. A file that will not parse is reported with the built-in list still
+in use, and an unknown key is an error: a catalogue that quietly does nothing,
+or quietly does something else, is how somebody comes to believe they are
+watching a path they are not.
 
 Each finding comes with a proposed scope and the reason for it, and is accepted
 or dismissed interactively. Dismissals are remembered, so the second run is

@@ -144,6 +144,9 @@ enum Command {
         dismiss: Option<String>,
     },
 
+    /// What `discover` looks for, and where to add to it
+    Catalogue,
+
     /// Start tracking a path
     Track {
         path: String,
@@ -275,6 +278,7 @@ fn main() -> Result<()> {
         Command::Discover { write, ref dismiss } => {
             run::discover(write, dismiss.as_deref(), cli.backend.as_deref(), cli.json)?
         }
+        Command::Catalogue => run::catalogue(cli.json)?,
         Command::Track {
             ref path,
             ref scope,
@@ -340,6 +344,7 @@ fn name_of(c: &Command) -> &'static str {
         Command::Plan => "plan",
         Command::Apply { .. } => "apply",
         Command::Discover { .. } => "discover",
+        Command::Catalogue => "catalogue",
         Command::Track { .. } => "track",
         Command::Diff { .. } => "diff",
         Command::Resolve => "resolve",

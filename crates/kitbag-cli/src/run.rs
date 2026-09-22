@@ -2387,6 +2387,94 @@ fn parse_pick(answer: &str, count: usize) -> Picked {
     }
 }
 
+/// What `discover` looks for, and where to add to it.
+///
+/// The built-in list is the places that are the same on most machines. It
+/// cannot know where somebody keeps their work, so the interesting half of
+/// this command is the last paragraph: the file to write, and the shape of a
+/// line in it.
+pub fn catalogue(json: bool) -> Result<()> {
+    use kitbag_catalog::{catalogue_path, Kind, Origin};
+
+    let home = home();
+    let (all, trouble) = kitbag_catalog::catalogue(&home);
+    let path = catalogue_path(&home);
+
+    if json {
+        let out: Vec<_> = all
+            .iter()
+            .map(|k| {
+                serde_json::json!({
+                    "path": k.path,
+                    "scope": k.scope,
+                    "why": k.why,
+                    "kind": match k.kind { Kind::Secret => "secret", Kind::Setup => "setup" },
+                    "only": k.only,
+                    "per_machine": k.per_machine,
+                    "yours": k.origin == Origin::Yours,
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&out)?);
+        return Ok(());
+    }
+
+    if let Some(why) = &trouble {
+        println!();
+        println!("  ! {why}");
+    }
+
+    for (kind, origin) in [
+        (Kind::Secret, Origin::BuiltIn),
+        (Kind::Setup, Origin::BuiltIn),
+        (Kind::Secret, Origin::Yours),
+        (Kind::Setup, Origin::Yours),
+    ] {
+        let rows: Vec<&kitbag_catalog::Known> = all
+            .iter()
+            .filter(|k| k.kind == kind && k.origin == origin)
+            .collect();
+        if rows.is_empty() {
+            continue;
+        }
+        println!();
+        println!(
+            "  {} · {}",
+            kind.heading(),
+            match origin {
+                Origin::BuiltIn => "built in",
+                Origin::Yours => "yours",
+            }
+        );
+        for k in rows {
+            let mut notes: Vec<String> = vec![k.scope.clone()];
+            if let Some(only) = &k.only {
+                notes.push(format!("only {only}"));
+            }
+            if k.per_machine {
+                notes.push("per machine".into());
+            }
+            println!("    ~/{:<36} {:<22} {}", k.path, notes.join(", "), k.why);
+        }
+    }
+
+    println!();
+    println!("  {} place(s) looked for. Add your own in", all.len());
+    println!("  {}:", path.display());
+    println!();
+    println!("    [[known]]");
+    println!("    path = \"work/deploy/*\"          # under your home");
+    println!("    why  = \"deploy scripts\"");
+    println!("    scope = \"work\"                  # personal by default");
+    println!("    kind  = \"setup\"                 # or \"secret\"; setup by default");
+    println!("    only  = \"scripts\"               # optional: files beginning `#!`");
+    println!();
+    println!("  A path already listed above replaces that entry rather than");
+    println!("  adding a second one, which is how a place kitbag guessed wrong");
+    println!("  about gets corrected.");
+    Ok(())
+}
+
 /// One line from the person, with the question left on screen.
 fn ask(question: &str) -> Result<String> {
     use std::io::Write;

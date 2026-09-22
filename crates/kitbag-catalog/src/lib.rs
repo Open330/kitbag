@@ -14,21 +14,55 @@
 
 use std::path::{Path, PathBuf};
 
-/// A place credentials are known to live, and what to assume about it.
+/// Where somebody wrote this entry down.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Origin {
+    /// Shipped with kitbag: the places that are the same on most machines.
+    BuiltIn,
+    /// This machine's own catalogue file. Nobody else knows where you keep
+    /// your work, so the list has to be open.
+    Yours,
+}
+
+/// A place worth keeping is known to live, and what to assume about it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+// A misspelt key is a rule that quietly does something other than what was
+// written. Better to say so than to look like it worked.
+#[serde(deny_unknown_fields)]
 pub struct Known {
     /// Relative to the home directory. A trailing `/*` matches one level.
-    pub path: &'static str,
-    pub scope: &'static str,
-    pub why: &'static str,
+    pub path: String,
+    #[serde(default = "personal")]
+    pub scope: String,
+    #[serde(default = "no_reason_given")]
+    pub why: String,
     /// This belongs to the machine, not to its owner: every machine has one
     /// at the same path and they are all different. Proposed with
     /// `per_machine = true`, which names the item after the machine and
     /// leaves the path alone.
+    #[serde(default)]
     pub per_machine: bool,
     /// What this is, for a report that groups rather than lists forty things.
+    #[serde(default)]
     pub kind: Kind,
     /// Which of the matches are worth keeping. See `Track::only`.
-    pub only: Option<&'static str>,
+    #[serde(default)]
+    pub only: Option<String>,
+    /// Not written in the file: filled in by whoever loaded it.
+    #[serde(skip, default = "yours")]
+    pub origin: Origin,
+}
+
+fn personal() -> String {
+    "personal".to_string()
+}
+
+fn no_reason_given() -> String {
+    "something you named".to_string()
+}
+
+fn yours() -> Origin {
+    Origin::Yours
 }
 
 /// The two reasons a file is worth keeping, which are not the same reason.
@@ -38,12 +72,16 @@ pub struct Known {
 /// and you will not remember the half of it. Both belong in the store; telling
 /// somebody which is which is the difference between a list they read and a
 /// list they scroll past.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Kind {
     /// Values that must not leak.
     Secret,
     /// Configuration and scripts. Yours, and nobody else's business, but
-    /// losing them costs time rather than access.
+    /// losing them costs time rather than access. The default for anything
+    /// somebody adds by hand: claiming a file is a credential when nobody
+    /// said so would put it in the wrong half of every report.
+    #[default]
     Setup,
 }
 
@@ -61,284 +99,291 @@ impl Kind {
 /// A guess at the scope is exactly that: `~/.aws/config` is a work credential
 /// far more often than not, and saying so beats leaving every finding blank.
 /// The guess is always shown as a guess.
-pub const CATALOGUE: &[Known] = &[
-    Known {
-        path: ".aws/config",
-        scope: "work",
-        why: "AWS profiles and roles",
-        per_machine: false,
-        kind: Kind::Secret,
-        only: None,
-    },
-    Known {
-        path: ".aws/credentials",
-        scope: "work",
-        why: "AWS access keys",
-        per_machine: false,
-        kind: Kind::Secret,
-        only: None,
-    },
-    Known {
-        path: ".kube/config",
-        scope: "work",
-        why: "cluster credentials",
-        per_machine: false,
-        kind: Kind::Secret,
-        only: None,
-    },
-    Known {
-        path: ".kube/*.yaml",
-        scope: "work",
-        why: "a cluster config",
-        per_machine: false,
-        kind: Kind::Secret,
-        only: None,
-    },
-    Known {
-        path: ".docker/config.json",
-        scope: "personal",
-        why: "registry logins",
-        per_machine: false,
-        kind: Kind::Secret,
-        only: None,
-    },
-    Known {
-        path: ".npmrc",
-        scope: "personal",
-        why: "an npm token",
-        per_machine: false,
-        kind: Kind::Secret,
-        only: None,
-    },
-    Known {
-        path: ".pypirc",
-        scope: "personal",
-        why: "a PyPI token",
-        per_machine: false,
-        kind: Kind::Secret,
-        only: None,
-    },
-    Known {
-        path: ".netrc",
-        scope: "personal",
-        why: "passwords for anything using netrc",
-        per_machine: false,
-        kind: Kind::Secret,
-        only: None,
-    },
-    Known {
-        path: ".gitconfig",
-        scope: "personal",
-        why: "identity, and sometimes a token",
-        per_machine: false,
-        kind: Kind::Secret,
-        only: None,
-    },
-    Known {
-        path: ".config/gh/hosts.yml",
-        scope: "personal",
-        why: "a GitHub token",
-        per_machine: false,
-        kind: Kind::Secret,
-        only: None,
-    },
-    Known {
-        path: ".config/rclone/rclone.conf",
-        scope: "personal",
-        why: "cloud storage credentials",
-        per_machine: false,
-        kind: Kind::Secret,
-        only: None,
-    },
-    Known {
-        path: ".terraformrc",
-        scope: "work",
-        why: "a Terraform Cloud token",
-        per_machine: false,
-        kind: Kind::Secret,
-        only: None,
-    },
-    Known {
-        path: ".cargo/credentials.toml",
-        scope: "personal",
-        why: "a crates.io token",
-        per_machine: false,
-        kind: Kind::Secret,
-        only: None,
-    },
-    Known {
-        path: ".claude/.credentials.json",
-        scope: "personal",
-        why: "an assistant's login",
-        per_machine: false,
-        kind: Kind::Secret,
-        only: None,
-    },
-    Known {
-        path: ".codex/auth.json",
-        scope: "personal",
-        why: "an assistant's login",
-        per_machine: false,
-        kind: Kind::Secret,
-        only: None,
-    },
-    Known {
-        path: ".config/hishtory/.hishtory.config.json",
-        scope: "personal",
-        why: "a shell-history key",
-        per_machine: false,
-        kind: Kind::Secret,
-        only: None,
-    },
-    Known {
-        // Every machine keeps one here and they are all different keys. One
-        // item name for four of them means three are backed up nowhere, and a
-        // key that exists in one place is gone with the machine it is on.
-        // This was learnt the expensive way on four machines; a new one
-        // should not have to learn it again.
-        path: ".ssh/id_*",
-        scope: "personal",
-        why: "a private key, and this machine's own",
-        per_machine: true,
-        kind: Kind::Secret,
-        only: None,
-    },
-    Known {
-        path: ".envs/*",
-        scope: "auto",
-        why: "a directory of environment files",
-        per_machine: false,
-        kind: Kind::Secret,
-        only: None,
-    },
-    Known {
-        path: "Library/Keychains/*.keychain-db",
-        scope: "work",
-        why: "a keychain a tool made for itself",
-        per_machine: false,
-        kind: Kind::Secret,
-        only: None,
-    },
+/// One row of the built-in table: path, scope, why, per-machine, kind, filter.
+/// A tuple rather than the struct, so the table stays a table — thirty-three
+/// entries of six named fields each is a page nobody reads down.
+type Row = (
+    &'static str,
+    &'static str,
+    &'static str,
+    bool,
+    Kind,
+    Option<&'static str>,
+);
+
+const BUILT_IN: &[Row] = &[
+    (
+        ".aws/config",
+        "work",
+        "AWS profiles and roles",
+        false,
+        Kind::Secret,
+        None,
+    ),
+    (
+        ".aws/credentials",
+        "work",
+        "AWS access keys",
+        false,
+        Kind::Secret,
+        None,
+    ),
+    (
+        ".kube/config",
+        "work",
+        "cluster credentials",
+        false,
+        Kind::Secret,
+        None,
+    ),
+    (
+        ".kube/*.yaml",
+        "work",
+        "a cluster config",
+        false,
+        Kind::Secret,
+        None,
+    ),
+    (
+        ".docker/config.json",
+        "personal",
+        "registry logins",
+        false,
+        Kind::Secret,
+        None,
+    ),
+    (
+        ".npmrc",
+        "personal",
+        "an npm token",
+        false,
+        Kind::Secret,
+        None,
+    ),
+    (
+        ".pypirc",
+        "personal",
+        "a PyPI token",
+        false,
+        Kind::Secret,
+        None,
+    ),
+    (
+        ".netrc",
+        "personal",
+        "passwords for anything using netrc",
+        false,
+        Kind::Secret,
+        None,
+    ),
+    (
+        ".gitconfig",
+        "personal",
+        "identity, and sometimes a token",
+        false,
+        Kind::Secret,
+        None,
+    ),
+    (
+        ".config/gh/hosts.yml",
+        "personal",
+        "a GitHub token",
+        false,
+        Kind::Secret,
+        None,
+    ),
+    (
+        ".config/rclone/rclone.conf",
+        "personal",
+        "cloud storage credentials",
+        false,
+        Kind::Secret,
+        None,
+    ),
+    (
+        ".terraformrc",
+        "work",
+        "a Terraform Cloud token",
+        false,
+        Kind::Secret,
+        None,
+    ),
+    (
+        ".cargo/credentials.toml",
+        "personal",
+        "a crates.io token",
+        false,
+        Kind::Secret,
+        None,
+    ),
+    (
+        ".claude/.credentials.json",
+        "personal",
+        "an assistant's login",
+        false,
+        Kind::Secret,
+        None,
+    ),
+    (
+        ".codex/auth.json",
+        "personal",
+        "an assistant's login",
+        false,
+        Kind::Secret,
+        None,
+    ),
+    (
+        ".config/hishtory/.hishtory.config.json",
+        "personal",
+        "a shell-history key",
+        false,
+        Kind::Secret,
+        None,
+    ),
+    (
+        ".ssh/id_*",
+        "personal",
+        "a private key, and this machine's own",
+        true,
+        Kind::Secret,
+        None,
+    ),
+    (
+        ".envs/*",
+        "auto",
+        "a directory of environment files",
+        false,
+        Kind::Secret,
+        None,
+    ),
+    (
+        "Library/Keychains/*.keychain-db",
+        "work",
+        "a keychain a tool made for itself",
+        false,
+        Kind::Secret,
+        None,
+    ),
     // Everything below here is the other half: not a credential, and the part
     // a settings repository usually carries in git. A machine that came back
     // with every secret intact and none of this is a machine somebody still
     // has to spend an evening on.
-    Known {
-        path: ".zshrc",
-        scope: "personal",
-        why: "your shell, as you set it up",
-        per_machine: false,
-        kind: Kind::Setup,
-        only: None,
-    },
-    Known {
-        path: ".zshenv",
-        scope: "personal",
-        why: "shell environment",
-        per_machine: false,
-        kind: Kind::Setup,
-        only: None,
-    },
-    Known {
-        path: ".zprofile",
-        scope: "personal",
-        why: "shell login setup",
-        per_machine: false,
-        kind: Kind::Setup,
-        only: None,
-    },
-    Known {
-        path: ".bashrc",
-        scope: "personal",
-        why: "your shell, as you set it up",
-        per_machine: false,
-        kind: Kind::Setup,
-        only: None,
-    },
-    Known {
-        path: ".profile",
-        scope: "personal",
-        why: "shell login setup",
-        per_machine: false,
-        kind: Kind::Setup,
-        only: None,
-    },
-    Known {
-        path: ".gitignore_global",
-        scope: "personal",
-        why: "what git ignores everywhere",
-        per_machine: false,
-        kind: Kind::Setup,
-        only: None,
-    },
-    Known {
-        path: ".tmux.conf",
-        scope: "personal",
-        why: "tmux, as you set it up",
-        per_machine: false,
-        kind: Kind::Setup,
-        only: None,
-    },
-    Known {
-        path: ".vimrc",
-        scope: "personal",
-        why: "vim, as you set it up",
-        per_machine: false,
-        kind: Kind::Setup,
-        only: None,
-    },
-    Known {
-        path: ".editorconfig",
-        scope: "personal",
-        why: "editor defaults",
-        per_machine: false,
-        kind: Kind::Setup,
-        only: None,
-    },
-    Known {
-        path: ".config/starship.toml",
-        scope: "personal",
-        why: "your prompt",
-        per_machine: false,
-        kind: Kind::Setup,
-        only: None,
-    },
-    Known {
-        path: ".config/ghostty/config",
-        scope: "personal",
-        why: "your terminal",
-        per_machine: false,
-        kind: Kind::Setup,
-        only: None,
-    },
-    Known {
-        path: ".config/nvim/*",
-        scope: "personal",
-        why: "your editor's own configuration",
-        per_machine: false,
-        kind: Kind::Setup,
-        only: None,
-    },
+    (
+        ".zshrc",
+        "personal",
+        "your shell, as you set it up",
+        false,
+        Kind::Setup,
+        None,
+    ),
+    (
+        ".zshenv",
+        "personal",
+        "shell environment",
+        false,
+        Kind::Setup,
+        None,
+    ),
+    (
+        ".zprofile",
+        "personal",
+        "shell login setup",
+        false,
+        Kind::Setup,
+        None,
+    ),
+    (
+        ".bashrc",
+        "personal",
+        "your shell, as you set it up",
+        false,
+        Kind::Setup,
+        None,
+    ),
+    (
+        ".profile",
+        "personal",
+        "shell login setup",
+        false,
+        Kind::Setup,
+        None,
+    ),
+    (
+        ".gitignore_global",
+        "personal",
+        "what git ignores everywhere",
+        false,
+        Kind::Setup,
+        None,
+    ),
+    (
+        ".tmux.conf",
+        "personal",
+        "tmux, as you set it up",
+        false,
+        Kind::Setup,
+        None,
+    ),
+    (
+        ".vimrc",
+        "personal",
+        "vim, as you set it up",
+        false,
+        Kind::Setup,
+        None,
+    ),
+    (
+        ".editorconfig",
+        "personal",
+        "editor defaults",
+        false,
+        Kind::Setup,
+        None,
+    ),
+    (
+        ".config/starship.toml",
+        "personal",
+        "your prompt",
+        false,
+        Kind::Setup,
+        None,
+    ),
+    (
+        ".config/ghostty/config",
+        "personal",
+        "your terminal",
+        false,
+        Kind::Setup,
+        None,
+    ),
+    (
+        ".config/nvim/*",
+        "personal",
+        "your editor's own configuration",
+        false,
+        Kind::Setup,
+        None,
+    ),
     // The two that need a filter. Both hold what somebody wrote *and* what a
     // package manager installed, and only the first is worth a store: the
     // second is a binary built for one architecture, which is exactly what
     // the `programs` list exists to carry as a name instead.
-    Known {
-        path: "bin/*",
-        scope: "personal",
-        why: "scripts you wrote",
-        per_machine: false,
-        kind: Kind::Setup,
-        only: Some("scripts"),
-    },
-    Known {
-        path: ".local/bin/*",
-        scope: "personal",
-        why: "scripts you wrote (installed binaries are left out)",
-        per_machine: false,
-        kind: Kind::Setup,
-        only: Some("scripts"),
-    },
+    (
+        "bin/*",
+        "personal",
+        "scripts you wrote",
+        false,
+        Kind::Setup,
+        Some("scripts"),
+    ),
+    (
+        ".local/bin/*",
+        "personal",
+        "scripts you wrote (installed binaries are left out)",
+        false,
+        Kind::Setup,
+        Some("scripts"),
+    ),
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -356,7 +401,9 @@ pub struct Finding {
     /// See [`Known::kind`].
     pub kind: Kind,
     /// See [`Known::only`].
-    pub only: Option<&'static str>,
+    pub only: Option<String>,
+    /// See [`Known::origin`].
+    pub origin: Origin,
     /// A file that exists now. For a pattern finding this is the first match,
     /// so there is always something concrete to show and to compare against.
     pub path: PathBuf,
@@ -392,10 +439,78 @@ impl Finding {
         if self.per_machine {
             out.push_str("per_machine = true\n");
         }
-        if let Some(only) = self.only {
+        if let Some(only) = &self.only {
             out.push_str(&format!("only = \"{only}\"\n"));
         }
         out
+    }
+}
+
+/// The places kitbag ships knowing about.
+pub fn built_in() -> Vec<Known> {
+    BUILT_IN
+        .iter()
+        .map(|(path, scope, why, per_machine, kind, only)| Known {
+            path: (*path).to_string(),
+            scope: (*scope).to_string(),
+            why: (*why).to_string(),
+            per_machine: *per_machine,
+            kind: *kind,
+            only: only.map(str::to_string),
+            origin: Origin::BuiltIn,
+        })
+        .collect()
+}
+
+/// Where a machine keeps its own additions to the catalogue.
+pub fn catalogue_path(home: &Path) -> PathBuf {
+    match std::env::var_os("KITBAG_CATALOGUE") {
+        Some(p) => PathBuf::from(p),
+        None => home.join(".config/kitbag/catalogue.toml"),
+    }
+}
+
+#[derive(serde::Deserialize, Default)]
+struct Additions {
+    #[serde(default, rename = "known")]
+    known: Vec<Known>,
+}
+
+/// Everything to look for: what kitbag ships with, plus this machine's own.
+///
+/// The built-in list is the places that are the same on most machines. Nobody
+/// else knows where you keep your work, so the list has to be open — and an
+/// entry naming the same path as a built-in one **replaces** it, which is how
+/// somebody says "that is `work` here, not `personal`" without having to
+/// argue with a Rust constant.
+///
+/// A file that will not parse is reported rather than ignored: a catalogue
+/// silently doing nothing is how somebody believes they are watching a path
+/// they are not.
+pub fn catalogue(home: &Path) -> (Vec<Known>, Option<String>) {
+    let mut all = built_in();
+    let path = catalogue_path(home);
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return (all, None);
+    };
+    match toml::from_str::<Additions>(&text) {
+        Ok(added) => {
+            for one in added.known {
+                match all.iter().position(|k| k.path == one.path) {
+                    Some(at) => all[at] = one,
+                    None => all.push(one),
+                }
+            }
+            (all, None)
+        }
+        Err(e) => (
+            all,
+            Some(format!(
+                "{}: {} — the built-in list is in use and yours is not",
+                path.display(),
+                e.message()
+            )),
+        ),
     }
 }
 
@@ -429,11 +544,22 @@ pub fn kept_by_git(path: &Path) -> Option<PathBuf> {
 
 /// Everything worth proposing, minus what is already tracked or dismissed.
 pub fn scan(home: &Path, tracked: &[PathBuf], dismissed: &[PathBuf]) -> Scan {
+    scan_with(&catalogue(home).0, home, tracked, dismissed)
+}
+
+/// The same, against a catalogue somebody hands over. Separated so a test can
+/// ask about one entry without the other thirty-three joining in.
+pub fn scan_with(
+    catalogue: &[Known],
+    home: &Path,
+    tracked: &[PathBuf],
+    dismissed: &[PathBuf],
+) -> Scan {
     let mut found: Vec<Finding> = Vec::new();
     let mut in_git: Vec<(PathBuf, PathBuf)> = Vec::new();
 
-    for known in CATALOGUE {
-        let matches = expand(home, known.path);
+    for known in catalogue {
+        let matches = expand(home, &known.path);
         if matches.is_empty() {
             continue;
         }
@@ -448,7 +574,7 @@ pub fn scan(home: &Path, tracked: &[PathBuf], dismissed: &[PathBuf]) -> Scan {
             // news: the filter would take none of them, and proposing a track
             // that collects nothing is a way of wasting somebody's attention.
             let mut matches = matches;
-            if known.only == Some("scripts") {
+            if known.only.as_deref() == Some("scripts") {
                 matches.retain(|m| starts_with_shebang(m));
                 if matches.is_empty() {
                     continue;
@@ -473,12 +599,13 @@ pub fn scan(home: &Path, tracked: &[PathBuf], dismissed: &[PathBuf]) -> Scan {
                 &mut found,
                 Finding {
                     path: matches[0].clone(),
-                    pattern: Some(known.path.to_string()),
+                    pattern: Some(known.path.clone()),
                     scope: known.scope.to_string(),
                     why: known.why.to_string(),
                     per_machine: known.per_machine,
                     kind: known.kind,
-                    only: known.only,
+                    only: known.only.clone(),
+                    origin: known.origin,
                     source: Source::Catalogue,
                 },
             );
@@ -494,7 +621,8 @@ pub fn scan(home: &Path, tracked: &[PathBuf], dismissed: &[PathBuf]) -> Scan {
                     why: known.why.to_string(),
                     per_machine: known.per_machine,
                     kind: known.kind,
-                    only: known.only,
+                    only: known.only.clone(),
+                    origin: known.origin,
                     source: Source::Catalogue,
                 },
             );
@@ -517,6 +645,7 @@ pub fn scan(home: &Path, tracked: &[PathBuf], dismissed: &[PathBuf]) -> Scan {
                 // so anything it turns up is one by construction.
                 kind: Kind::Secret,
                 only: None,
+                origin: Origin::BuiltIn,
                 source: Source::Noticed,
             },
         );
@@ -791,6 +920,7 @@ mod tests {
                 per_machine: false,
                 kind: Kind::Secret,
                 only: None,
+                origin: Origin::BuiltIn,
                 source: Source::Catalogue,
             }
             .as_toml(h.path()),
@@ -803,9 +933,9 @@ mod tests {
 mod per_machine_tests {
     use super::*;
 
-    fn key_entry() -> &'static Known {
-        CATALOGUE
-            .iter()
+    fn key_entry() -> Known {
+        built_in()
+            .into_iter()
             .find(|k| k.path == ".ssh/id_*")
             .expect("the catalogue knows about private keys")
     }
@@ -822,10 +952,11 @@ mod per_machine_tests {
             path: home.path().join(".ssh/id_ed25519"),
             pattern: Some(".ssh/id_*".into()),
             scope: "personal".into(),
-            why: key_entry().why.into(),
+            why: key_entry().why,
             per_machine: true,
             kind: Kind::Secret,
             only: None,
+            origin: Origin::BuiltIn,
             source: Source::Catalogue,
         };
         let toml = f.as_toml(home.path());
@@ -837,12 +968,12 @@ mod per_machine_tests {
     fn nothing_else_in_the_catalogue_claims_to_belong_to_a_machine() {
         // An item named after a machine is one no other machine will take.
         // That is right for a key and wrong for everything a person owns.
-        let named: Vec<&str> = CATALOGUE
-            .iter()
+        let named: Vec<String> = built_in()
+            .into_iter()
             .filter(|k| k.per_machine)
             .map(|k| k.path)
             .collect();
-        assert_eq!(named, vec![".ssh/id_*"]);
+        assert_eq!(named, vec![".ssh/id_*".to_string()]);
     }
 
     #[test]
@@ -856,6 +987,7 @@ mod per_machine_tests {
             per_machine: false,
             kind: Kind::Secret,
             only: None,
+            origin: Origin::BuiltIn,
             source: Source::Catalogue,
         };
         assert!(!f.as_toml(home.path()).contains("per_machine"));
@@ -887,7 +1019,7 @@ mod setup_tests {
             .filter(|f| f.pattern.as_deref() == Some(".local/bin/*"))
             .collect();
         assert_eq!(bin.len(), 1, "{found:#?}");
-        assert_eq!(bin[0].only, Some("scripts"));
+        assert_eq!(bin[0].only.as_deref(), Some("scripts"));
         assert!(bin[0].as_toml(home.path()).contains("only = \"scripts\""));
     }
 
@@ -910,15 +1042,18 @@ mod setup_tests {
     fn the_catalogue_covers_more_than_credentials() {
         // A machine that came back with every secret intact and no shell
         // profile is a machine somebody still has to spend an evening on.
-        let setup: Vec<&str> = CATALOGUE
-            .iter()
+        let setup: Vec<String> = built_in()
+            .into_iter()
             .filter(|k| k.kind == Kind::Setup)
             .map(|k| k.path)
             .collect();
         for expected in [".zshrc", "bin/*", ".local/bin/*", ".config/nvim/*"] {
-            assert!(setup.contains(&expected), "{expected} is not in {setup:?}");
+            assert!(
+                setup.iter().any(|p| p == expected),
+                "{expected} is not in {setup:?}"
+            );
         }
-        assert!(CATALOGUE.iter().any(|k| k.kind == Kind::Secret));
+        assert!(built_in().iter().any(|k| k.kind == Kind::Secret));
     }
 
     #[test]
@@ -985,5 +1120,104 @@ mod git_tests {
         let scanned = scan(home.path(), &[], &[]);
         assert!(scanned.in_git.is_empty());
         assert!(scanned.found.iter().any(|f| f.path.ends_with(".zshrc")));
+    }
+}
+
+#[cfg(test)]
+mod yours_tests {
+    use super::*;
+
+    fn home_with_a_catalogue(text: &str) -> tempfile::TempDir {
+        let home = tempfile::tempdir().expect("a home");
+        std::fs::create_dir_all(home.path().join(".config/kitbag")).unwrap();
+        std::fs::write(home.path().join(".config/kitbag/catalogue.toml"), text).unwrap();
+        home
+    }
+
+    #[test]
+    fn a_place_only_you_know_about_can_be_added() {
+        // The built-in list is the places that are the same on most machines.
+        // Nobody else knows where somebody keeps their work.
+        let home = home_with_a_catalogue(
+            "[[known]]\npath = \"work/deploy/*\"\nwhy = \"deploy scripts\"\n\
+             scope = \"work\"\nonly = \"scripts\"\n",
+        );
+        let (all, trouble) = catalogue(home.path());
+        assert!(trouble.is_none(), "{trouble:?}");
+        let mine = all
+            .iter()
+            .find(|k| k.path == "work/deploy/*")
+            .expect("the entry is in the catalogue");
+        assert_eq!(mine.origin, Origin::Yours);
+        assert_eq!(mine.scope, "work");
+        assert_eq!(mine.only.as_deref(), Some("scripts"));
+        // Setup unless somebody says otherwise: calling a file a credential
+        // when nobody said so puts it in the wrong half of every report.
+        assert_eq!(mine.kind, Kind::Setup);
+    }
+
+    #[test]
+    fn naming_a_path_kitbag_already_knows_corrects_it_rather_than_doubling_it() {
+        // kitbag guesses `work` for AWS because it usually is. Arguing with a
+        // Rust constant is not a thing somebody should have to do.
+        let home = home_with_a_catalogue(
+            "[[known]]\npath = \".aws/credentials\"\nwhy = \"my own AWS keys\"\n\
+             scope = \"personal\"\nkind = \"secret\"\n",
+        );
+        let (all, _) = catalogue(home.path());
+        let hits: Vec<&Known> = all
+            .iter()
+            .filter(|k| k.path == ".aws/credentials")
+            .collect();
+        assert_eq!(hits.len(), 1, "{hits:#?}");
+        assert_eq!(hits[0].scope, "personal");
+        assert_eq!(hits[0].origin, Origin::Yours);
+        assert_eq!(all.len(), built_in().len());
+    }
+
+    #[test]
+    fn a_catalogue_that_will_not_parse_says_so_and_does_not_pretend() {
+        // Silence here means somebody believes they are watching a path they
+        // are not, which is the failure this whole tool exists to avoid.
+        let home = home_with_a_catalogue("[[known]]\nthis is not toml\n");
+        let (all, trouble) = catalogue(home.path());
+        assert!(trouble.is_some());
+        assert!(trouble.unwrap().contains("catalogue.toml"));
+        assert_eq!(
+            all.len(),
+            built_in().len(),
+            "the built-in list is still in use"
+        );
+    }
+
+    #[test]
+    fn a_misspelt_key_is_refused_rather_than_ignored() {
+        // `scopes` is not `scope`. Ignoring it would leave a rule doing
+        // something other than what is written in front of somebody's eyes.
+        let home = home_with_a_catalogue(
+            "[[known]]\npath = \"notes/*\"\nwhy = \"notes\"\nscopes = \"work\"\n",
+        );
+        let (_, trouble) = catalogue(home.path());
+        assert!(trouble.is_some(), "an unknown key was accepted");
+    }
+
+    #[test]
+    fn what_you_added_is_actually_looked_for() {
+        let home = home_with_a_catalogue(
+            "[[known]]\npath = \"work/deploy/*\"\nwhy = \"deploy scripts\"\n\
+             scope = \"work\"\nonly = \"scripts\"\n",
+        );
+        std::fs::create_dir_all(home.path().join("work/deploy")).unwrap();
+        std::fs::write(home.path().join("work/deploy/ship"), "#!/bin/sh\necho go\n").unwrap();
+        std::fs::write(home.path().join("work/deploy/README"), "notes\n").unwrap();
+
+        let scanned = scan(home.path(), &[], &[]);
+        let mine = scanned
+            .found
+            .iter()
+            .find(|f| f.pattern.as_deref() == Some("work/deploy/*"))
+            .expect("the added place is proposed");
+        assert_eq!(mine.scope, "work");
+        assert!(mine.as_toml(home.path()).contains("only = \"scripts\""));
     }
 }

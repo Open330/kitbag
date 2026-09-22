@@ -253,6 +253,45 @@ Asked of every file a pattern matches, not of the first one: a directory where
 one script is a link into a repository and the next is not is the ordinary
 case.
 
+## The catalogue is a list you can add to
+
+`kitbag catalogue` says what `discover` looks for and where to add to it.
+
+The built-in list is the places that are the same on most machines. Nobody else
+knows where you keep your work, so the list is open:
+
+```toml
+# ~/.config/kitbag/catalogue.toml
+
+[[known]]
+path = "work/deploy/*"          # under your home
+why  = "deploy scripts"
+scope = "work"                  # personal by default
+kind  = "setup"                 # or "secret"; setup by default
+only  = "scripts"               # optional: files beginning `#!`
+```
+
+A path already in the built-in list **replaces** that entry rather than adding
+a second one, which is how somebody says "AWS is `personal` on this machine"
+without having to argue with a Rust constant:
+
+```console
+$ kitbag catalogue
+  credentials and keys · yours
+    ~/.aws/credentials                     personal               my own AWS keys
+
+  setup — configuration and scripts · yours
+    ~/work/deploy/*                        work, only scripts     deploy scripts
+
+  34 place(s) looked for.
+```
+
+Two refusals on purpose. A file that will not parse is **reported**, and the
+built-in list stays in use — a catalogue silently doing nothing is how somebody
+comes to believe they are watching a path they are not. And a misspelt key is
+an error rather than a shrug: `scopes` is not `scope`, and ignoring it leaves a
+rule doing something other than what is written in front of you.
+
 ## Programs, as a list
 
 A store should never hold a binary. It is large, it is built for one
