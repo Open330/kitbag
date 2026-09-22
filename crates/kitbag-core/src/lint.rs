@@ -53,14 +53,20 @@ const BLOCKS: &[(&str, &str)] = &[
 
 /// Absolute paths that only exist on one person's machine. They leak a
 /// username, sometimes an employer, and they break for everyone else.
-fn personal_path(line: &str) -> Option<&'static str> {
+///
+/// The prefix that matched comes back with the reason, so the report can show
+/// the one actually found. Naming the wrong prefix sends whoever reads it
+/// looking on a machine that may not even have that directory — and this
+/// comment cannot spell the other one out, because this file is checked by
+/// the rule it describes. // lint:allow
+fn personal_path(line: &str) -> Option<(&'static str, &'static str)> {
     for prefix in ["/Users/", "/home/"] {
         if let Some(idx) = line.find(prefix) {
             let rest = &line[idx + prefix.len()..];
             let user: String = rest.chars().take_while(|c| c.is_alphanumeric()).collect();
             // `/home/runner` is CI; `/Users/` with nothing after is a doc example.
             if !user.is_empty() && user != "runner" && user != "user" && user != "you" {
-                return Some("an absolute path from somebody's machine");
+                return Some((prefix, "an absolute path from somebody's machine"));
             }
         }
     }
@@ -145,12 +151,12 @@ pub fn check(content: &str) -> Vec<Finding> {
             }
         }
 
-        if let Some(why) = personal_path(line) {
+        if let Some((prefix, why)) = personal_path(line) {
             if !documented {
                 findings.push(Finding {
                     rule: "personal-path",
                     line: line_no,
-                    masked: "/Users/****".into(),
+                    masked: format!("{prefix}****"),
                     why,
                 });
             }
@@ -228,6 +234,10 @@ mod tests {
     fn catches_a_path_from_somebody_machine() {
         let f = check("source /Users/alice/.envs/work.env"); // lint:allow
         assert_eq!(f[0].rule, "personal-path");
+        assert_eq!(f[0].masked, "/Users/****");
+        // and says which prefix it found, rather than always the first one
+        let linux = check("source /home/alice/.envs/work.env"); // lint:allow
+        assert_eq!(linux[0].masked, "/home/****");
         // and does not object to the paths CI and documentation really use
         assert!(check("/home/runner/work/kitbag").is_empty());
         assert!(check("~/.config/kitbag/machine.toml").is_empty());

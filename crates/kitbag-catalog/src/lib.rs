@@ -20,6 +20,11 @@ pub struct Known {
     pub path: &'static str,
     pub scope: &'static str,
     pub why: &'static str,
+    /// This belongs to the machine, not to its owner: every machine has one
+    /// at the same path and they are all different. Proposed with
+    /// `per_machine = true`, which names the item after the machine and
+    /// leaves the path alone.
+    pub per_machine: bool,
 }
 
 /// The obvious places, in the order a person would think of them.
@@ -32,96 +37,120 @@ pub const CATALOGUE: &[Known] = &[
         path: ".aws/config",
         scope: "work",
         why: "AWS profiles and roles",
+        per_machine: false,
     },
     Known {
         path: ".aws/credentials",
         scope: "work",
         why: "AWS access keys",
+        per_machine: false,
     },
     Known {
         path: ".kube/config",
         scope: "work",
         why: "cluster credentials",
+        per_machine: false,
     },
     Known {
         path: ".kube/*.yaml",
         scope: "work",
         why: "a cluster config",
+        per_machine: false,
     },
     Known {
         path: ".docker/config.json",
         scope: "personal",
         why: "registry logins",
+        per_machine: false,
     },
     Known {
         path: ".npmrc",
         scope: "personal",
         why: "an npm token",
+        per_machine: false,
     },
     Known {
         path: ".pypirc",
         scope: "personal",
         why: "a PyPI token",
+        per_machine: false,
     },
     Known {
         path: ".netrc",
         scope: "personal",
         why: "passwords for anything using netrc",
+        per_machine: false,
     },
     Known {
         path: ".gitconfig",
         scope: "personal",
         why: "identity, and sometimes a token",
+        per_machine: false,
     },
     Known {
         path: ".config/gh/hosts.yml",
         scope: "personal",
         why: "a GitHub token",
+        per_machine: false,
     },
     Known {
         path: ".config/rclone/rclone.conf",
         scope: "personal",
         why: "cloud storage credentials",
+        per_machine: false,
     },
     Known {
         path: ".terraformrc",
         scope: "work",
         why: "a Terraform Cloud token",
+        per_machine: false,
     },
     Known {
         path: ".cargo/credentials.toml",
         scope: "personal",
         why: "a crates.io token",
+        per_machine: false,
     },
     Known {
         path: ".claude/.credentials.json",
         scope: "personal",
         why: "an assistant's login",
+        per_machine: false,
     },
     Known {
         path: ".codex/auth.json",
         scope: "personal",
         why: "an assistant's login",
+        per_machine: false,
     },
     Known {
         path: ".config/hishtory/.hishtory.config.json",
         scope: "personal",
         why: "a shell-history key",
+        per_machine: false,
     },
     Known {
+        // Every machine keeps one here and they are all different keys. One
+        // item name for four of them means three are backed up nowhere, and a
+        // key that exists in one place is gone with the machine it is on.
+        // This was learnt the expensive way on four machines; a new one
+        // should not have to learn it again.
         path: ".ssh/id_*",
         scope: "personal",
-        why: "a private key",
+        why: "a private key, and this machine's own",
+        per_machine: true,
     },
     Known {
         path: ".envs/*",
         scope: "auto",
         why: "a directory of environment files",
+        per_machine: false,
     },
     Known {
         path: "Library/Keychains/*.keychain-db",
         scope: "work",
         why: "a keychain a tool made for itself",
+        per_machine: false,
     },
 ];
 
@@ -135,6 +164,8 @@ pub enum Source {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Finding {
+    /// See [`Known::per_machine`].
+    pub per_machine: bool,
     /// A file that exists now. For a pattern finding this is the first match,
     /// so there is always something concrete to show and to compare against.
     pub path: PathBuf,
@@ -163,14 +194,14 @@ impl Finding {
 
     pub fn as_toml(&self, home: &Path) -> String {
         let shown = self.shown(home);
-        if self.scope == "auto" {
-            format!("[[track]]\npath = \"{shown}\"\n")
-        } else {
-            format!(
-                "[[track]]\npath = \"{shown}\"\nscope = \"{}\"\n",
-                self.scope
-            )
+        let mut out = format!("[[track]]\npath = \"{shown}\"\n");
+        if self.scope != "auto" {
+            out.push_str(&format!("scope = \"{}\"\n", self.scope));
         }
+        if self.per_machine {
+            out.push_str("per_machine = true\n");
+        }
+        out
     }
 }
 
@@ -197,6 +228,7 @@ pub fn scan(home: &Path, tracked: &[PathBuf], dismissed: &[PathBuf]) -> Vec<Find
                     pattern: Some(known.path.to_string()),
                     scope: known.scope.to_string(),
                     why: known.why.to_string(),
+                    per_machine: known.per_machine,
                     source: Source::Catalogue,
                 },
             );
@@ -210,6 +242,7 @@ pub fn scan(home: &Path, tracked: &[PathBuf], dismissed: &[PathBuf]) -> Vec<Find
                     pattern: None,
                     scope: known.scope.to_string(),
                     why: known.why.to_string(),
+                    per_machine: known.per_machine,
                     source: Source::Catalogue,
                 },
             );
@@ -224,6 +257,10 @@ pub fn scan(home: &Path, tracked: &[PathBuf], dismissed: &[PathBuf]) -> Vec<Find
                 pattern: None,
                 scope: "auto".into(),
                 why: "owner-only, and it reads like credentials".into(),
+                // Nothing noticed by looking can be known to belong to the
+                // machine rather than its owner. Guessing that would name
+                // items after a machine that has no business owning them.
+                per_machine: false,
                 source: Source::Noticed,
             },
         );
@@ -469,10 +506,70 @@ mod tests {
                 pattern: None,
                 scope: "auto".into(),
                 why: String::new(),
+                per_machine: false,
                 source: Source::Catalogue,
             }
             .as_toml(h.path()),
             "[[track]]\npath = \"~/.envs/x.env\"\n"
         );
+    }
+}
+
+#[cfg(test)]
+mod per_machine_tests {
+    use super::*;
+
+    fn key_entry() -> &'static Known {
+        CATALOGUE
+            .iter()
+            .find(|k| k.path == ".ssh/id_*")
+            .expect("the catalogue knows about private keys")
+    }
+
+    #[test]
+    fn a_private_key_is_proposed_as_this_machines_own() {
+        // Four machines keep a key at the same path and they are all
+        // different. One item name for four of them leaves three backed up
+        // nowhere, which is the whole failure this tool exists to avoid — and
+        // it is not something a person should have to know to ask for.
+        assert!(key_entry().per_machine);
+        let home = tempfile::tempdir().expect("a home");
+        let f = Finding {
+            path: home.path().join(".ssh/id_ed25519"),
+            pattern: Some(".ssh/id_*".into()),
+            scope: "personal".into(),
+            why: key_entry().why.into(),
+            per_machine: true,
+            source: Source::Catalogue,
+        };
+        let toml = f.as_toml(home.path());
+        assert!(toml.contains("per_machine = true"), "{toml}");
+        assert!(toml.contains("scope = \"personal\""), "{toml}");
+    }
+
+    #[test]
+    fn nothing_else_in_the_catalogue_claims_to_belong_to_a_machine() {
+        // An item named after a machine is one no other machine will take.
+        // That is right for a key and wrong for everything a person owns.
+        let named: Vec<&str> = CATALOGUE
+            .iter()
+            .filter(|k| k.per_machine)
+            .map(|k| k.path)
+            .collect();
+        assert_eq!(named, vec![".ssh/id_*"]);
+    }
+
+    #[test]
+    fn a_finding_that_belongs_to_nobody_in_particular_says_nothing_about_machines() {
+        let home = tempfile::tempdir().expect("a home");
+        let f = Finding {
+            path: home.path().join(".aws/credentials"),
+            pattern: None,
+            scope: "work".into(),
+            why: "AWS access keys".into(),
+            per_machine: false,
+            source: Source::Catalogue,
+        };
+        assert!(!f.as_toml(home.path()).contains("per_machine"));
     }
 }

@@ -114,6 +114,9 @@ enum ColourChoice {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Set this machine up and send what it holds — one question at a time
+    Backup,
+
     /// What this machine has, grouped by scope, marked against the store
     #[command(visible_alias = "st")]
     Status,
@@ -263,6 +266,7 @@ fn main() -> Result<()> {
     let width = terminal_width();
 
     match cli.command {
+        Command::Backup => run::backup(cli.backend.as_deref(), wanted, cli.jobs, colour)?,
         Command::Status => run::status(cli.backend.as_deref(), wanted, colour, width, cli.json)?,
         Command::Plan => run::plan(&repo_root(), colour, width, cli.json)?,
         Command::Apply { ref only, yes } => {
@@ -299,14 +303,16 @@ fn main() -> Result<()> {
             dry_run,
             colour,
         )?,
-        Command::Push { dry_run, ref only } => run::push(
-            cli.backend.as_deref(),
-            wanted,
-            dry_run,
-            only,
-            cli.jobs,
-            colour,
-        )?,
+        Command::Push { dry_run, ref only } => {
+            run::push(
+                cli.backend.as_deref(),
+                wanted,
+                dry_run,
+                only,
+                cli.jobs,
+                colour,
+            )?;
+        }
         Command::Restore {
             dry_run,
             yes,
@@ -329,6 +335,7 @@ fn repo_root() -> std::path::PathBuf {
 
 fn name_of(c: &Command) -> &'static str {
     match c {
+        Command::Backup => "backup",
         Command::Status => "status",
         Command::Plan => "plan",
         Command::Apply { .. } => "apply",

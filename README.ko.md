@@ -26,6 +26,38 @@
 > 레시피가 패키지·링크·macOS 설정·명령까지 커버하고, 기계 설정의 나머지는 앞으로
 > 입니다. 근거와 계획은 [DESIGN.md](DESIGN.md)에 있습니다.
 
+## 여기서 시작하세요
+
+```bash
+kitbag backup
+```
+
+한 번도 해본 적 없는 기계에서 상태가 스토어에 들어간 기계까지, 명령 하나로
+갑니다. 어느 스토어인지, 이 기계가 무엇을 맡을지 묻고, 그다음 찾은 것들을
+**하나씩** 묻습니다 — 자기 홈 디렉터리에 대해 "이거 전부 가져가"는 보지 않고
+할 수 있는 대답이 아니니까요:
+
+```console
+  3/4  3 thing(s) here that nothing keeps.
+       [y]es  [n]ot now  [d]ismiss for good  [a]ll  [q]uit asking
+
+       ~/.ssh/id_*
+       a private key, and this machine's own · a known place
+       [y/n/d/a/q] y
+
+  4/4  What would be sent:
+
+  + ssh:id_ed25519@this-mac       would be sent
+  + programs@this-mac             would be sent
+
+  Send these? [y/N]
+```
+
+마지막 질문 전까지 아무것도 보내지 않고, 그 위의 줄이 계획입니다. 각 단계는
+같은 이름의 명령 그대로입니다 — `discover`, `track`, `push`, `resolve` —
+그래서 이 워크스루는 **실행 순서**지, 따로 관리해야 할 두 번째 구현이
+아닙니다.
+
 ## 아무도 답하지 않는 질문
 
 새 기계를 세팅하는 일은 두 종류의 도구가 나눠 맡고 있습니다. dotfile 관리자는

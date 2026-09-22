@@ -48,6 +48,38 @@ $ kitbag status
 > macOS defaults and commands, and the rest of a machine's setup is still
 > ahead. See [DESIGN.md](DESIGN.md) for the argument and the plan.
 
+## Start here
+
+```bash
+kitbag backup
+```
+
+One command, from a machine that has never done this to a machine whose state
+is in a store. It asks which store, what this machine is willing to hold, and
+then — one at a time, because "take all of these" is not an answer anybody can
+give about their own home directory without looking — what it found:
+
+```console
+  3/4  3 thing(s) here that nothing keeps.
+       [y]es  [n]ot now  [d]ismiss for good  [a]ll  [q]uit asking
+
+       ~/.ssh/id_*
+       a private key, and this machine's own · a known place
+       [y/n/d/a/q] y
+
+  4/4  What would be sent:
+
+  + ssh:id_ed25519@this-mac       would be sent
+  + programs@this-mac             would be sent
+
+  Send these? [y/N]
+```
+
+Nothing is sent until that last question, and the line above it is the plan.
+Every step is the command of the same name — `discover`, `track`, `push`,
+`resolve` — so the walkthrough is an order to run them in, not a second
+implementation to keep honest.
+
 ## The question nothing answers
 
 Setting up a machine is two jobs handled by two kinds of tool. Dotfile managers

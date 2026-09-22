@@ -65,6 +65,7 @@ to my employer, and what happens to it when I leave".
 ## 4. Command surface
 
 ```
+kitbag backup                 set this machine up and send what it holds, asking as it goes
 kitbag status                 what this machine has, grouped by scope, marked against the store
 kitbag plan                   what apply would change
 kitbag apply [--only pkg]     make it so
@@ -90,6 +91,13 @@ install software, which reaches the network, takes minutes, and no backup
 undoes. What it does not do is print a plan to confirm against: building one
 means fetching every payload to find out, which is twice the calls and every
 secret held twice as long, for a question `--dry-run` already answers.
+
+`backup` is the others in an order: `discover`, `track`, `push` and, if
+anything was held, `resolve`. It exists because needing four commands in the
+right sequence — one of which lived in a different repository — is a way of
+saying the tool is for people who already know how it works. It runs nothing
+the named commands do not, which is the point: a walkthrough that did its own
+thing would be a second implementation to keep honest.
 
 Four global flags decide what a run touches: `--scope` (which scopes this
 machine takes this time), `--skip name,…` (items it keeps to itself, in both

@@ -444,7 +444,7 @@ pub fn push(
     only: &[String],
     jobs: usize,
     colour: Colour,
-) -> Result<()> {
+) -> Result<usize> {
     let home = home();
     let config = Config::load_or_default(&config_path())?.with_env_skips();
     let wanted = wanted.unwrap_or_else(|| config.wanted());
@@ -700,7 +700,7 @@ pub fn push(
         }
         bail!("{} item(s) did not reach the store", failed.len());
     }
-    Ok(())
+    Ok(held.len())
 }
 
 /// What one send came to: the item, where it stood, and either the
@@ -2051,6 +2051,228 @@ fn here_and_declared() -> Result<Vec<kitbag_providers::programs::Program>> {
 /// program whose command is not its name is not reinstalled every restore.
 fn already_here(p: &kitbag_providers::programs::Program) -> bool {
     p.manager == kitbag_providers::programs::SCRIPT && kitbag_providers::programs::is_here(p)
+}
+
+/// One command, from a machine that has never done this to a machine whose
+/// state is in a store.
+///
+/// The pieces all existed — `discover`, `track`, `push`, `resolve` — and
+/// needing four of them in the right order, one of which lives in another
+/// repository, is a way of saying "this is for people who already know how it
+/// works". A backup is one question with several parts, so it is asked as one.
+///
+/// Nothing here is new behaviour. Every step is the command of the same name,
+/// which is deliberate: a walkthrough that did its own thing would be a second
+/// implementation to keep honest.
+pub fn backup(
+    backend: Option<&str>,
+    wanted: Option<Wanted>,
+    jobs: usize,
+    colour: Colour,
+) -> Result<()> {
+    use std::io::IsTerminal;
+
+    if !std::io::stdin().is_terminal() {
+        bail!(
+            "kitbag backup asks questions, and there is no terminal to ask in.\n\
+             The steps on their own: kitbag discover --write, then kitbag push"
+        );
+    }
+
+    let home = home();
+    let cfg_path = config_path();
+
+    println!();
+    println!("  Backing up what this machine holds that is yours.");
+    println!("  Nothing is sent until the last step, and it says what first.");
+
+    // 1 — where it goes.
+    let chosen = match backend {
+        Some(name) => name.to_string(),
+        None => {
+            let known = "bw, op, pass, age";
+            let answer = ask(&format!("\n  1/4  Which store? ({known})\n       [bw] "))?;
+            if answer.is_empty() {
+                "bw".to_string()
+            } else {
+                answer
+            }
+        }
+    };
+    // Asked for now rather than at the end: a name that is not a backend
+    // should be a question, not four minutes of work and then a question.
+    let _: BackendKind = chosen.parse()?;
+
+    // 2 — what this machine is willing to hold. Only asked of a machine that
+    // has never said, because changing it later is a decision with weight.
+    if !cfg_path.exists() {
+        println!();
+        println!("  2/4  This machine has no config yet.");
+        println!("       Scope says whose an item is: personal, work, shared.");
+        println!("       A machine takes the ones it names and ignores the rest.");
+        // Parsed before it is written, so a typo is caught here rather than by
+        // every command from now on — and asked again rather than fatal.
+        let scopes = loop {
+            let answer = ask("\n       Which scopes does this machine take? [personal] ")?;
+            let answer = if answer.is_empty() {
+                "personal".to_string()
+            } else {
+                answer
+            };
+            match Wanted::parse(&answer) {
+                Ok(_) => break answer,
+                Err(e) => println!("       {e}"),
+            }
+        };
+        let list: Vec<String> = scopes
+            .split(',')
+            .map(|s| format!("\"{}\"", s.trim()))
+            .filter(|s| s != "\"\"")
+            .collect();
+        if let Some(parent) = cfg_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&cfg_path, format!("scopes = [{}]\n", list.join(", ")))?;
+        println!("       Wrote {}.", cfg_path.display());
+    } else {
+        println!();
+        println!("  2/4  Using {}.", cfg_path.display());
+    }
+
+    // 3 — what is here that nothing keeps. One at a time, because "take all
+    // of these" is not an answer anybody can give about their own home
+    // directory without looking.
+    let config = Config::load_or_default(&cfg_path)?.with_env_skips();
+    let Collected { items, .. } = collect(&config, &home);
+    let tracked: Vec<PathBuf> = items.iter().map(|i| i.path.clone()).collect();
+    let found = scan(&home, &tracked, &dismissed());
+
+    println!();
+    if found.is_empty() {
+        println!("  3/4  Nothing untracked that this knows to look for.");
+    } else {
+        println!("  3/4  {} thing(s) here that nothing keeps.", found.len());
+        println!("       [y]es  [n]ot now  [d]ismiss for good  [a]ll  [q]uit asking");
+        let mut take: Vec<Finding> = Vec::new();
+        let mut all = false;
+        for f in &found {
+            if all {
+                take.push(f.clone());
+                continue;
+            }
+            println!();
+            println!("       {}", f.shown(&home));
+            println!(
+                "       {} · {}",
+                f.why,
+                match f.source {
+                    Source::Catalogue => "a known place",
+                    Source::Noticed => "noticed here",
+                }
+            );
+            if f.scope == "auto" {
+                println!("       needs its own `# scope:` line, or it is skipped");
+            }
+            match ask("       [y/n/d/a/q] ")?.to_lowercase().as_str() {
+                "y" | "yes" => take.push(f.clone()),
+                "a" | "all" => {
+                    all = true;
+                    take.push(f.clone());
+                }
+                "d" => {
+                    dismiss_path(&f.path)?;
+                    println!("       dismissed — it will not come up again");
+                }
+                "q" => break,
+                // Anything else is "not now", including an empty line: the
+                // answer easiest to hit by accident should do nothing.
+                _ => {}
+            }
+        }
+        if take.is_empty() {
+            println!();
+            println!("       Nothing added.");
+        } else {
+            append_tracks(&cfg_path, &take, &home)?;
+            println!();
+            println!("       Added {} to {}.", take.len(), cfg_path.display());
+        }
+    }
+
+    // The one thing no scan can find, because it is not a file.
+    let config = Config::load_or_default(&cfg_path)?.with_env_skips();
+    let records_programs = config
+        .tracks
+        .iter()
+        .any(|t| t.name.as_deref() == Some("programs"));
+    if !records_programs {
+        if let Some(manager) = PackageManager::detect() {
+            println!();
+            println!(
+                "       {} is here and nothing records what it installed.",
+                manager.name()
+            );
+            println!("       The list, not the programs — a kilobyte, not gigabytes.");
+            if ask("       Record it? [Y/n] ")?.to_lowercase() != "n" {
+                let mut current = std::fs::read_to_string(&cfg_path).unwrap_or_default();
+                current.push_str(
+                    "\n[[track]]\nname = \"programs\"\nscope = \"personal\"\nper_machine = true\n\
+                     command = { export = \"kitbag programs\", restore = \"kitbag programs --restore\" }\n",
+                );
+                std::fs::write(&cfg_path, current)?;
+                println!("       Added.");
+            }
+        }
+    }
+
+    // 4 — what would be sent, then sending it. `push --dry-run` is the plan,
+    // and it is the same code that does the work a moment later.
+    println!();
+    println!("  4/4  What would be sent:");
+    push(Some(&chosen), wanted.clone(), true, &[], jobs, colour)?;
+
+    if ask("\n  Send these? [y/N] ")?.to_lowercase() != "y" {
+        println!("  Nothing was sent.");
+        return Ok(());
+    }
+
+    let held = push(Some(&chosen), wanted.clone(), false, &[], jobs, colour)?;
+
+    if held > 0 {
+        println!();
+        println!("  {held} item(s) moved on both sides and were left alone.");
+        if ask("  Settle them now, one at a time? [y/N] ")?.to_lowercase() == "y" {
+            resolve(Some(&chosen), wanted, colour)?;
+        } else {
+            println!("  kitbag resolve, when you are ready.");
+        }
+    }
+
+    println!();
+    println!("  Done. `kitbag status --backend {chosen}` says where things stand.");
+    Ok(())
+}
+
+/// One line from the person, with the question left on screen.
+fn ask(question: &str) -> Result<String> {
+    use std::io::Write;
+    print!("{question}");
+    std::io::stdout().flush()?;
+    let mut answer = String::new();
+    std::io::stdin().read_line(&mut answer)?;
+    Ok(answer.trim().to_string())
+}
+
+/// Never propose this path again.
+fn dismiss_path(path: &Path) -> Result<()> {
+    let file = dismissed_path();
+    if let Some(parent) = file.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut list = std::fs::read_to_string(&file).unwrap_or_default();
+    list.push_str(&format!("{}\n", path.display()));
+    std::fs::write(&file, list)?;
+    Ok(())
 }
 
 #[cfg(test)]
